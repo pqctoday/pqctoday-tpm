@@ -23,6 +23,8 @@
 #include <string.h>
 #include <stdint.h>
 
+#include "p11_helper.h"
+
 /* ------------------------------------------------------------------ */
 /* Terminal output                                                     */
 /* ------------------------------------------------------------------ */
@@ -245,8 +247,133 @@ int main(int argc, char **argv)
     /* ---- softhsmv3 cross-check ---- */
     const char *p11mod = getenv("PQCTODAY_TPM_PKCS11_MODULE");
     if (p11mod && *p11mod) {
-        INFO("softhsmv3 cross-check requested against %s", p11mod);
-        INFO("p11_helper.c integration pending — skipped this run");
+        INFO("softhsmv3 cross-check against %s", p11mod);
+
+        p11_ctx *ctx = p11_open(p11mod, "12345678", "11223344");
+        if (!ctx) {
+            FAIL("softhsmv3 p11_open failed — see p11: errors above");
+        } else {
+            INFO("module: %s", p11_module_description(ctx));
+
+            /* ML-DSA-65 end-to-end: keygen via PKCS#11, sign a message,
+             * have OpenSSL verify the result against the exported pk. */
+            uint8_t  pk[4096];  size_t  pk_len  = sizeof(pk);
+            uint8_t  sig[8192]; size_t  sig_len = sizeof(sig);
+            uint64_t priv_h = 0;
+
+            if (!p11_mldsa_generate(ctx, 2 /* CKP_ML_DSA_65 */,
+                                    pk, &pk_len, &priv_h)) {
+                FAIL("softhsmv3 ML-DSA-65 keygen");
+            } else if (pk_len != 1952) {
+                FAIL("softhsmv3 ML-DSA-65 pk size: got %zu, expected 1952", pk_len);
+            } else {
+                PASS("softhsmv3 ML-DSA-65 keygen (pk=%zu B)", pk_len);
+
+                if (!p11_mldsa_sign(ctx, priv_h, msg, sizeof(msg)-1,
+                                    sig, &sig_len)) {
+                    FAIL("softhsmv3 ML-DSA-65 sign");
+                } else if (sig_len != 3309) {
+                    FAIL("softhsmv3 ML-DSA-65 sig size: got %zu, expected 3309", sig_len);
+                } else {
+                    PASS("softhsmv3 ML-DSA-65 sign (sig=%zu B)", sig_len);
+
+                    /* Cross-verify the softhsmv3 signature with OpenSSL. */
+                    EVP_PKEY     *osl_pk  = NULL;
+                    EVP_PKEY_CTX *osl_ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-DSA-65", NULL);
+                    OSSL_PARAM    osl_p[2];
+                    int cross_ok = 0;
+                    if (osl_ctx
+                        && EVP_PKEY_fromdata_init(osl_ctx) > 0) {
+                        osl_p[0] = OSSL_PARAM_construct_octet_string(
+                                      OSSL_PKEY_PARAM_PUB_KEY, pk, pk_len);
+                        osl_p[1] = OSSL_PARAM_construct_end();
+                        if (EVP_PKEY_fromdata(osl_ctx, &osl_pk,
+                                              EVP_PKEY_PUBLIC_KEY, osl_p) > 0
+                            && osl_pk) {
+                            EVP_MD_CTX *osl_md = EVP_MD_CTX_new();
+                            if (osl_md
+                                && EVP_DigestVerifyInit_ex(osl_md, NULL, NULL,
+                                                           NULL, NULL, osl_pk, NULL) > 0
+                                && EVP_DigestVerify(osl_md, sig, sig_len,
+                                                    msg, sizeof(msg)-1) == 1) {
+                                cross_ok = 1;
+                            }
+                            EVP_MD_CTX_free(osl_md);
+                        }
+                    }
+                    EVP_PKEY_free(osl_pk);
+                    EVP_PKEY_CTX_free(osl_ctx);
+                    if (cross_ok)
+                        PASS("ML-DSA-65  softhsmv3 sign → OpenSSL verify  (cross-verify)");
+                    else {
+                        FAIL("ML-DSA-65  softhsmv3 sign → OpenSSL verify");
+                        dump_openssl_errors("cross-verify");
+                    }
+                }
+            }
+
+            /* ML-KEM-768 cross-check: softhsmv3 keygen → OpenSSL encap
+             * against exported pk → softhsmv3 decap → shared secret equality. */
+            uint8_t  kem_pk[2048]; size_t kem_pk_len = sizeof(kem_pk);
+            uint64_t kem_priv_h = 0;
+            if (!p11_mlkem_generate(ctx, 2 /* CKP_ML_KEM_768 */,
+                                    kem_pk, &kem_pk_len, &kem_priv_h)) {
+                FAIL("softhsmv3 ML-KEM-768 keygen");
+            } else if (kem_pk_len != 1184) {
+                FAIL("softhsmv3 ML-KEM-768 pk size: got %zu, expected 1184", kem_pk_len);
+            } else {
+                PASS("softhsmv3 ML-KEM-768 keygen (pk=%zu B)", kem_pk_len);
+
+                /* OpenSSL encap against softhsmv3's pk. */
+                EVP_PKEY     *osl_pk  = NULL;
+                EVP_PKEY_CTX *osl_ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-KEM-768", NULL);
+                OSSL_PARAM    osl_p[2];
+                uint8_t  ct[4096];  size_t ct_len = sizeof(ct);
+                uint8_t  ssA[64];   size_t ssA_len = sizeof(ssA);
+                uint8_t  ssB[64];   size_t ssB_len = sizeof(ssB);
+                int encap_ok = 0;
+                if (osl_ctx && EVP_PKEY_fromdata_init(osl_ctx) > 0) {
+                    osl_p[0] = OSSL_PARAM_construct_octet_string(
+                                  OSSL_PKEY_PARAM_PUB_KEY, kem_pk, kem_pk_len);
+                    osl_p[1] = OSSL_PARAM_construct_end();
+                    if (EVP_PKEY_fromdata(osl_ctx, &osl_pk,
+                                          EVP_PKEY_PUBLIC_KEY, osl_p) > 0
+                        && osl_pk) {
+                        EVP_PKEY_CTX_free(osl_ctx);
+                        osl_ctx = EVP_PKEY_CTX_new_from_pkey(NULL, osl_pk, NULL);
+                        if (osl_ctx
+                            && EVP_PKEY_encapsulate_init(osl_ctx, NULL) > 0
+                            && EVP_PKEY_encapsulate(osl_ctx, ct, &ct_len,
+                                                    ssA, &ssA_len) > 0) {
+                            encap_ok = 1;
+                        }
+                    }
+                }
+                if (!encap_ok) {
+                    FAIL("ML-KEM-768 OpenSSL encap against softhsmv3 pk");
+                    dump_openssl_errors("encap");
+                } else {
+                    PASS("ML-KEM-768 OpenSSL encap against softhsmv3 pk (ct=%zu, ss=%zu)",
+                         ct_len, ssA_len);
+
+                    if (!p11_mlkem_decapsulate(ctx, kem_priv_h,
+                                                ct, ct_len, ssB, &ssB_len)) {
+                        FAIL("ML-KEM-768 softhsmv3 decap");
+                    } else if (ssA_len == ssB_len
+                               && memcmp(ssA, ssB, ssA_len) == 0) {
+                        PASS("ML-KEM-768 OpenSSL encap ↔ softhsmv3 decap shared-secret match (%zu B)",
+                             ssA_len);
+                    } else {
+                        FAIL("ML-KEM-768 shared-secret mismatch (lenA=%zu, lenB=%zu)",
+                             ssA_len, ssB_len);
+                    }
+                }
+                EVP_PKEY_free(osl_pk);
+                EVP_PKEY_CTX_free(osl_ctx);
+            }
+
+            p11_close(ctx);
+        }
     } else {
         INFO("PQCTODAY_TPM_PKCS11_MODULE unset — skipping softhsmv3 cross-check");
     }

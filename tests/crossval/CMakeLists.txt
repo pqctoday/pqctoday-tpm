@@ -7,6 +7,7 @@ find_package(OpenSSL 3.5 REQUIRED)
 
 add_executable(test_pqc_crossval
     src/test_pqc_crossval.c
+    src/p11_helper.c
 )
 
 target_include_directories(test_pqc_crossval PRIVATE

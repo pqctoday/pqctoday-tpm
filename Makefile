@@ -3,7 +3,7 @@
 # The real build systems are autotools (libtpms, swtpm) and CMake (cross-val
 # harness, future WASM). This Makefile wraps common developer-facing targets.
 
-.PHONY: help crossval crossval-build crossval-run compliance docker-dev clean
+.PHONY: help crossval crossval-build crossval-run crossval-softhsm compliance compliance-softhsm docker-dev clean
 
 help:
 	@echo "pqctoday-tpm — developer targets"
@@ -25,13 +25,47 @@ crossval-build:
 	                 -DOPENSSL_ROOT_DIR=/opt/openssl && \
 	             cmake --build tests/crossval/build -j$$(nproc)'
 
+# Location of the softhsmv3 sibling repo (built dylibs live under build-pqctoday/).
+# Override with SOFTHSMV3_DIR=... make crossval-softhsm.
+SOFTHSMV3_DIR ?= $(abspath $(PWD)/../softhsmv3)
+
 crossval: crossval-build
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
 	    tests/crossval/build/test_pqc_crossval
 
+crossval-softhsm: crossval-build
+	@echo "Running cross-val with softhsmv3 C++ engine at $(SOFTHSMV3_DIR)"
+	@test -f $(SOFTHSMV3_DIR)/build-pqctoday/src/lib/libsofthsmv3.so \
+	    || (echo "libsofthsmv3.so not found — run: cd $(SOFTHSMV3_DIR) && \
+	                 cmake -S . -B build-pqctoday -DBUILD_TESTS=OFF && \
+	                 cmake --build build-pqctoday -j"; exit 1)
+	docker run --rm \
+	    -v "$$PWD:/workspace" \
+	    -v "$(SOFTHSMV3_DIR):/softhsmv3" \
+	    -e SOFTHSM2_CONF=/tmp/softhsm2.conf \
+	    -e PQCTODAY_TPM_PKCS11_MODULE=/softhsmv3/build-pqctoday/src/lib/libsofthsmv3.so \
+	    -w /workspace pqctoday-tpm-dev \
+	    bash -c 'mkdir -p /tmp/tokens && \
+	             printf "directories.tokendir = /tmp/tokens\nobjectstore.backend = file\nlog.level = ERROR\n" > /tmp/softhsm2.conf && \
+	             tests/crossval/build/test_pqc_crossval'
+
 compliance: crossval-build
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
 	    bash tests/compliance/v185_compliance.sh
+
+compliance-softhsm: crossval-build
+	@echo "Running full compliance (includes softhsmv3) with $(SOFTHSMV3_DIR)"
+	@test -f $(SOFTHSMV3_DIR)/build-pqctoday/src/lib/libsofthsmv3.so \
+	    || (echo "libsofthsmv3.so not found — build softhsmv3 first"; exit 1)
+	docker run --rm \
+	    -v "$$PWD:/workspace" \
+	    -v "$(SOFTHSMV3_DIR):/softhsmv3" \
+	    -e SOFTHSM2_CONF=/tmp/softhsm2.conf \
+	    -e PQCTODAY_TPM_PKCS11_MODULE=/softhsmv3/build-pqctoday/src/lib/libsofthsmv3.so \
+	    -w /workspace pqctoday-tpm-dev \
+	    bash -c 'mkdir -p /tmp/tokens && \
+	             printf "directories.tokendir = /tmp/tokens\nobjectstore.backend = file\nlog.level = ERROR\n" > /tmp/softhsm2.conf && \
+	             bash tests/compliance/v185_compliance.sh'
 
 clean:
 	rm -rf tests/crossval/build

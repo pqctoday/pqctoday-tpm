@@ -2438,6 +2438,15 @@ NV_TPMT_SENSITIVE_Marshal(TPMT_SENSITIVE *source, BYTE **buffer, INT32 *size)
     case TPM_ALG_ECC:
     case TPM_ALG_KEYEDHASH:
     case TPM_ALG_SYMCIPHER:
+#if ALG_MLDSA
+    case TPM_ALG_MLDSA:
+#endif
+#if ALG_HASH_MLDSA
+    case TPM_ALG_HASH_MLDSA:
+#endif
+#if ALG_MLKEM
+    case TPM_ALG_MLKEM:
+#endif
         written += TPMU_SENSITIVE_COMPOSITE_Marshal(&source->sensitive, buffer, size, source->sensitiveType);
         break;
     default:
@@ -2472,6 +2481,15 @@ NV_TPMT_SENSITIVE_Unmarshal(TPMT_SENSITIVE *target, BYTE **buffer, INT32 *size)
         case TPM_ALG_ECC:
         case TPM_ALG_KEYEDHASH:
         case TPM_ALG_SYMCIPHER:
+#if ALG_MLDSA
+        case TPM_ALG_MLDSA:
+#endif
+#if ALG_HASH_MLDSA
+        case TPM_ALG_HASH_MLDSA:
+#endif
+#if ALG_MLKEM
+        case TPM_ALG_MLKEM:
+#endif
 	    rc = TPMU_SENSITIVE_COMPOSITE_Unmarshal(&target->sensitive, buffer, size, target->sensitiveType);
 	    break;
 	default:

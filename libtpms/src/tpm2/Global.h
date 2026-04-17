@@ -1499,7 +1499,11 @@ EXTERN int s_freeSessionSlots;
 // s_actionIoBuffer. The value of s_actionIoAllocation is the number of UINT64 values
 // allocated. It is used to set the pointer for the response structure. The command
 // dispatch code will marshal the response values into the final output buffer.
-EXTERN UINT64 s_actionIoBuffer[768];  // action I/O buffer
+/* pqctoday-tpm: bumped 768 → 1536 (6 KB → 12 KB) to fit TCG V1.85 PQC
+ * objects. Largest input: TPMT_PUBLIC for ML-DSA-87 (~2700 B) + TPMT_SENSITIVE
+ * (~1100 B). Largest output: TPMT_SIGNATURE with ML-DSA-87 sig (4627 B).
+ * Both directions share this buffer, need ≥ 8 KB for safe headroom. */
+EXTERN UINT64 s_actionIoBuffer[1536];  // action I/O buffer
 EXTERN UINT32 s_actionIoAllocation;   // number of UIN64 allocated for the
 // action input structure
 #  endif                              // IO_BUFFER_C

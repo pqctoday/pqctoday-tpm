@@ -477,6 +477,22 @@ SchemeChecks(OBJECT*      parentObject,  // IN: parent (null if primary seed)
     //
     switch(publicArea->type)
 	{
+#if ALG_MLDSA
+	  case TPM_ALG_MLDSA:
+#endif
+#if ALG_HASH_MLDSA
+	  case TPM_ALG_HASH_MLDSA:
+#endif
+#if ALG_MLKEM
+	  case TPM_ALG_MLKEM:
+#endif
+#if ALG_MLDSA || ALG_HASH_MLDSA || ALG_MLKEM
+	    /* TCG V1.85 PQC: parameter set is the analog of a classical
+	     * scheme and is validated at unmarshal time. No symmetric or
+	     * KDF fields apply. Skip the asymDetail/symAlgs validation
+	     * path entirely. */
+	    break;
+#endif
 	  case TPM_ALG_SYMCIPHER:
 	    symAlgs = &parms->symDetail.sym;
 	    // If this is a decrypt key, then only the block cipher modes (not

@@ -317,6 +317,19 @@ extern "C" {
     TPMI_RSA_KEY_BITS_Marshal(TPMI_RSA_KEY_BITS *source, BYTE **buffer, INT32 *size);
     UINT16
     TPM2B_PRIVATE_KEY_RSA_Marshal(TPM2B_PRIVATE_KEY_RSA *source, BYTE **buffer, INT32 *size);
+#if ALG_MLDSA || ALG_HASH_MLDSA
+    UINT16 TPM2B_PUBLIC_KEY_MLDSA_Marshal(TPM2B_PUBLIC_KEY_MLDSA *source, BYTE **buffer, INT32 *size);
+    UINT16 TPM2B_PRIVATE_KEY_MLDSA_Marshal(TPM2B_PRIVATE_KEY_MLDSA *source, BYTE **buffer, INT32 *size);
+    UINT16 TPMI_MLDSA_PARAMETER_SET_Marshal(TPMI_MLDSA_PARAMETER_SET *source, BYTE **buffer, INT32 *size);
+    UINT16 TPMS_MLDSA_PARMS_Marshal(TPMS_MLDSA_PARMS *source, BYTE **buffer, INT32 *size);
+    UINT16 TPMS_HASH_MLDSA_PARMS_Marshal(TPMS_HASH_MLDSA_PARMS *source, BYTE **buffer, INT32 *size);
+#endif
+#if ALG_MLKEM
+    UINT16 TPM2B_PUBLIC_KEY_MLKEM_Marshal(TPM2B_PUBLIC_KEY_MLKEM *source, BYTE **buffer, INT32 *size);
+    UINT16 TPM2B_PRIVATE_KEY_MLKEM_Marshal(TPM2B_PRIVATE_KEY_MLKEM *source, BYTE **buffer, INT32 *size);
+    UINT16 TPMI_MLKEM_PARAMETER_SET_Marshal(TPMI_MLKEM_PARAMETER_SET *source, BYTE **buffer, INT32 *size);
+    UINT16 TPMS_MLKEM_PARMS_Marshal(TPMS_MLKEM_PARMS *source, BYTE **buffer, INT32 *size);
+#endif
     UINT16
     TPM2B_ECC_PARAMETER_Marshal(TPM2B_ECC_PARAMETER *source, BYTE **buffer, INT32 *size);
     UINT16

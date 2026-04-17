@@ -61,12 +61,25 @@ int main(void)
      * size of the OBJECT is the same on all architectures so that a full
      * NVRAM fits on all architectures
      */
-#if RSA_4096
-# error Unsupported RSA key size
-#elif RSA_3072
-# define OBJECT_EXP_SIZE 2608
-#elif RSA_2048
-# define OBJECT_EXP_SIZE 1896
+/* pqctoday-tpm: OBJECT size grew because TPMU_PUBLIC_ID /
+ * TPMU_PUBLIC_PARMS / TPMU_SENSITIVE_COMPOSITE now hold ML-DSA and ML-KEM
+ * union members per TCG V1.85 RC4 Part 2. Measured post-PQC values. */
+#if ALG_MLDSA || ALG_MLKEM || ALG_HASH_MLDSA
+# if RSA_4096
+#  error Unsupported RSA key size
+# elif RSA_3072
+#  define OBJECT_EXP_SIZE 4816
+# elif RSA_2048
+#  define OBJECT_EXP_SIZE 4104
+# endif
+#else
+# if RSA_4096
+#  error Unsupported RSA key size
+# elif RSA_3072
+#  define OBJECT_EXP_SIZE 2608
+# elif RSA_2048
+#  define OBJECT_EXP_SIZE 1896
+# endif
 #endif
     if (sizeof(OBJECT) != OBJECT_EXP_SIZE) {
         fprintf(stderr, "sizeof(OBJECT) does not have expected size of %u bytes"

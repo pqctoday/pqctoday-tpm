@@ -85,7 +85,11 @@
 #define NUM_POLICY_PCR_GROUP       1
 #define NUM_AUTHVALUE_PCR_GROUP    1
 //#define MAX_CONTEXT_SIZE           2168
-#define MAX_CONTEXT_SIZE           2680	/* libtpms: changed for RSA-3072 */
+//#define MAX_CONTEXT_SIZE           2680  /* libtpms: changed for RSA-3072 */
+#define MAX_CONTEXT_SIZE           6144	/* pqctoday-tpm: TCG V1.85 PQC keys
+					 * grow OBJECT to ~4816 B (ML-DSA-87
+					 * pk = 2592 B, ML-KEM-1024 pk = 1568 B
+					 * plus classical union members). */
 #define MAX_DIGEST_BUFFER          1024
 #define MAX_NV_INDEX_SIZE          2048
 #define MAX_NV_BUFFER_SIZE         1024

@@ -20,7 +20,8 @@ docker-dev:
 
 crossval-build:
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
-	    bash -c 'cmake -S tests/crossval -B tests/crossval/build \
+	    bash -c 'cd libtpms && make install > /dev/null 2>&1 && ldconfig && cd - && \
+	             cmake -S tests/crossval -B tests/crossval/build \
 	                 -DCMAKE_PREFIX_PATH=/opt/openssl \
 	                 -DOPENSSL_ROOT_DIR=/opt/openssl && \
 	             cmake --build tests/crossval/build -j$$(nproc)'

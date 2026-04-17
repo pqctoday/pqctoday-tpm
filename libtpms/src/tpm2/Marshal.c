@@ -1716,6 +1716,71 @@ TPM2B_PRIVATE_KEY_RSA_Marshal(TPM2B_PRIVATE_KEY_RSA *source, BYTE **buffer, INT3
     return written;
 }
 
+#if ALG_MLDSA || ALG_HASH_MLDSA
+/* TCG V1.85 Part 2 Table 209 - TPM2B_PUBLIC_KEY_MLDSA */
+UINT16
+TPM2B_PUBLIC_KEY_MLDSA_Marshal(TPM2B_PUBLIC_KEY_MLDSA *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, sizeof(source->t.buffer), buffer, size);
+}
+
+/* TCG V1.85 Part 2 Table 210 - TPM2B_PRIVATE_KEY_MLDSA */
+UINT16
+TPM2B_PRIVATE_KEY_MLDSA_Marshal(TPM2B_PRIVATE_KEY_MLDSA *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, sizeof(source->t.buffer), buffer, size);
+}
+
+UINT16
+TPMI_MLDSA_PARAMETER_SET_Marshal(TPMI_MLDSA_PARAMETER_SET *source, BYTE **buffer, INT32 *size)
+{
+    return UINT16_Marshal(source, buffer, size);
+}
+
+UINT16
+TPMS_MLDSA_PARMS_Marshal(TPMS_MLDSA_PARMS *source, BYTE **buffer, INT32 *size)
+{
+    return TPMI_MLDSA_PARAMETER_SET_Marshal(&source->parameterSet, buffer, size);
+}
+
+UINT16
+TPMS_HASH_MLDSA_PARMS_Marshal(TPMS_HASH_MLDSA_PARMS *source, BYTE **buffer, INT32 *size)
+{
+    UINT16 written = 0;
+    written += TPMI_MLDSA_PARAMETER_SET_Marshal(&source->parameterSet, buffer, size);
+    written += TPMI_ALG_HASH_Marshal(&source->hashAlg, buffer, size);
+    return written;
+}
+#endif /* ALG_MLDSA || ALG_HASH_MLDSA */
+
+#if ALG_MLKEM
+/* TCG V1.85 Part 2 Table 205 - TPM2B_PUBLIC_KEY_MLKEM */
+UINT16
+TPM2B_PUBLIC_KEY_MLKEM_Marshal(TPM2B_PUBLIC_KEY_MLKEM *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, sizeof(source->t.buffer), buffer, size);
+}
+
+/* TCG V1.85 Part 2 Table 206 - TPM2B_PRIVATE_KEY_MLKEM */
+UINT16
+TPM2B_PRIVATE_KEY_MLKEM_Marshal(TPM2B_PRIVATE_KEY_MLKEM *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, sizeof(source->t.buffer), buffer, size);
+}
+
+UINT16
+TPMI_MLKEM_PARAMETER_SET_Marshal(TPMI_MLKEM_PARAMETER_SET *source, BYTE **buffer, INT32 *size)
+{
+    return UINT16_Marshal(source, buffer, size);
+}
+
+UINT16
+TPMS_MLKEM_PARMS_Marshal(TPMS_MLKEM_PARMS *source, BYTE **buffer, INT32 *size)
+{
+    return TPMI_MLKEM_PARAMETER_SET_Marshal(&source->parameterSet, buffer, size);
+}
+#endif /* ALG_MLKEM */
+
 /* Table 2:168 - Definition of TPM2B_ECC_PARAMETER Structure (StructuresTable()) */
 
 UINT16
@@ -1998,6 +2063,21 @@ TPMU_PUBLIC_ID_Marshal(TPMU_PUBLIC_ID *source, BYTE **buffer, INT32 *size, UINT3
 	written += TPMS_ECC_POINT_Marshal(&source->ecc, buffer, size);
 	break;
 #endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	written += TPM2B_PUBLIC_KEY_MLDSA_Marshal(&source->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	written += TPM2B_PUBLIC_KEY_MLDSA_Marshal(&source->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_MLKEM
+      case TPM_ALG_MLKEM:
+	written += TPM2B_PUBLIC_KEY_MLKEM_Marshal(&source->mlkem, buffer, size);
+	break;
+#endif
       default:
 	pAssert(FALSE);
     }
@@ -2070,6 +2150,21 @@ TPMU_PUBLIC_PARMS_Marshal(TPMU_PUBLIC_PARMS *source, BYTE **buffer, INT32 *size,
 	written += TPMS_ECC_PARMS_Marshal(&source->eccDetail, buffer, size);
 	break;
 #endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	written += TPMS_MLDSA_PARMS_Marshal(&source->mldsaDetail, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	written += TPMS_HASH_MLDSA_PARMS_Marshal(&source->hashMldsaDetail, buffer, size);
+	break;
+#endif
+#if ALG_MLKEM
+      case TPM_ALG_MLKEM:
+	written += TPMS_MLKEM_PARMS_Marshal(&source->mlkemDetail, buffer, size);
+	break;
+#endif
       default:
 	pAssert(FALSE);
     }
@@ -2139,6 +2234,21 @@ TPMU_SENSITIVE_COMPOSITE_Marshal(TPMU_SENSITIVE_COMPOSITE *source, BYTE **buffer
 #if ALG_SYMCIPHER
       case TPM_ALG_SYMCIPHER:
 	written += TPM2B_SYM_KEY_Marshal(&source->sym, buffer, size);
+	break;
+#endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	written += TPM2B_PRIVATE_KEY_MLDSA_Marshal(&source->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	written += TPM2B_PRIVATE_KEY_MLDSA_Marshal(&source->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_MLKEM
+      case TPM_ALG_MLKEM:
+	written += TPM2B_PRIVATE_KEY_MLKEM_Marshal(&source->mlkem, buffer, size);
 	break;
 #endif
       default:

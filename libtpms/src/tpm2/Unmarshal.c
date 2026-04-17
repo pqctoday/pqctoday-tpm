@@ -4013,6 +4013,99 @@ TPM2B_PRIVATE_KEY_RSA_Unmarshal(TPM2B_PRIVATE_KEY_RSA *target, BYTE **buffer, IN
     return rc;
 }
 
+#if ALG_MLDSA || ALG_HASH_MLDSA
+/* TCG V1.85 Part 2 Table 209 - TPM2B_PUBLIC_KEY_MLDSA */
+TPM_RC
+TPM2B_PUBLIC_KEY_MLDSA_Unmarshal(TPM2B_PUBLIC_KEY_MLDSA *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_MLDSA_PUB_SIZE, buffer, size);
+}
+
+/* TCG V1.85 Part 2 Table 210 - TPM2B_PRIVATE_KEY_MLDSA (32-byte seed ξ) */
+TPM_RC
+TPM2B_PRIVATE_KEY_MLDSA_Unmarshal(TPM2B_PRIVATE_KEY_MLDSA *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_MLDSA_PRIV_SEED_SIZE, buffer, size);
+}
+
+/* TCG V1.85 Part 2 §11 - TPMI_MLDSA_PARAMETER_SET */
+TPM_RC
+TPMI_MLDSA_PARAMETER_SET_Unmarshal(TPMI_MLDSA_PARAMETER_SET *target, BYTE **buffer, INT32 *size)
+{
+    TPM_RC rc = UINT16_Unmarshal(target, buffer, size);
+    if (rc == TPM_RC_SUCCESS) {
+	switch (*target) {
+	  case TPM_MLDSA_44:
+	  case TPM_MLDSA_65:
+	  case TPM_MLDSA_87:
+	    break;
+	  default:
+	    rc = TPM_RC_VALUE;
+	}
+    }
+    return rc;
+}
+
+/* TCG V1.85 Part 2 - TPMS_MLDSA_PARMS */
+TPM_RC
+TPMS_MLDSA_PARMS_Unmarshal(TPMS_MLDSA_PARMS *target, BYTE **buffer, INT32 *size)
+{
+    return TPMI_MLDSA_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
+}
+
+/* TCG V1.85 Part 2 - TPMS_HASH_MLDSA_PARMS (HashML-DSA pre-hash variant) */
+TPM_RC
+TPMS_HASH_MLDSA_PARMS_Unmarshal(TPMS_HASH_MLDSA_PARMS *target, BYTE **buffer, INT32 *size)
+{
+    TPM_RC rc = TPMI_MLDSA_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
+    if (rc == TPM_RC_SUCCESS) {
+	rc = TPMI_ALG_HASH_Unmarshal(&target->hashAlg, buffer, size, NO);
+    }
+    return rc;
+}
+#endif /* ALG_MLDSA || ALG_HASH_MLDSA */
+
+#if ALG_MLKEM
+/* TCG V1.85 Part 2 Table 205 - TPM2B_PUBLIC_KEY_MLKEM */
+TPM_RC
+TPM2B_PUBLIC_KEY_MLKEM_Unmarshal(TPM2B_PUBLIC_KEY_MLKEM *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_MLKEM_PUB_SIZE, buffer, size);
+}
+
+/* TCG V1.85 Part 2 Table 206 - TPM2B_PRIVATE_KEY_MLKEM (64-byte seed d‖z) */
+TPM_RC
+TPM2B_PRIVATE_KEY_MLKEM_Unmarshal(TPM2B_PRIVATE_KEY_MLKEM *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_MLKEM_PRIV_SEED_SIZE, buffer, size);
+}
+
+/* TCG V1.85 Part 2 §11 - TPMI_MLKEM_PARAMETER_SET */
+TPM_RC
+TPMI_MLKEM_PARAMETER_SET_Unmarshal(TPMI_MLKEM_PARAMETER_SET *target, BYTE **buffer, INT32 *size)
+{
+    TPM_RC rc = UINT16_Unmarshal(target, buffer, size);
+    if (rc == TPM_RC_SUCCESS) {
+	switch (*target) {
+	  case TPM_MLKEM_512:
+	  case TPM_MLKEM_768:
+	  case TPM_MLKEM_1024:
+	    break;
+	  default:
+	    rc = TPM_RC_VALUE;
+	}
+    }
+    return rc;
+}
+
+/* TCG V1.85 Part 2 - TPMS_MLKEM_PARMS */
+TPM_RC
+TPMS_MLKEM_PARMS_Unmarshal(TPMS_MLKEM_PARMS *target, BYTE **buffer, INT32 *size)
+{
+    return TPMI_MLKEM_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
+}
+#endif /* ALG_MLKEM */
+
 /* Table 161 - Definition of {ECC} TPM2B_ECC_PARAMETER Structure */
 
 TPM_RC
@@ -4383,6 +4476,15 @@ TPMI_ALG_PUBLIC_Unmarshal(TPMI_ALG_PUBLIC *target, BYTE **buffer, INT32 *size)
 #if ALG_SYMCIPHER
 	  case TPM_ALG_SYMCIPHER:
 #endif
+#if ALG_MLDSA
+	  case TPM_ALG_MLDSA:
+#endif
+#if ALG_HASH_MLDSA
+	  case TPM_ALG_HASH_MLDSA:
+#endif
+#if ALG_MLKEM
+	  case TPM_ALG_MLKEM:
+#endif
 	    break;
 	  default:
 	    rc = TPM_RC_TYPE;
@@ -4418,6 +4520,21 @@ TPMU_PUBLIC_ID_Unmarshal(TPMU_PUBLIC_ID *target, BYTE **buffer, INT32 *size, UIN
 #if ALG_ECC
       case TPM_ALG_ECC:
 	rc = TPMS_ECC_POINT_Unmarshal(&target->ecc, buffer, size);
+	break;
+#endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	rc = TPM2B_PUBLIC_KEY_MLDSA_Unmarshal(&target->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	rc = TPM2B_PUBLIC_KEY_MLDSA_Unmarshal(&target->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_MLKEM
+      case TPM_ALG_MLKEM:
+	rc = TPM2B_PUBLIC_KEY_MLKEM_Unmarshal(&target->mlkem, buffer, size);
 	break;
 #endif
       default:
@@ -4513,6 +4630,21 @@ TPMU_PUBLIC_PARMS_Unmarshal(TPMU_PUBLIC_PARMS *target, BYTE **buffer, INT32 *siz
 #if ALG_ECC
       case TPM_ALG_ECC:
 	rc = TPMS_ECC_PARMS_Unmarshal(&target->eccDetail, buffer, size);
+	break;
+#endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	rc = TPMS_MLDSA_PARMS_Unmarshal(&target->mldsaDetail, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	rc = TPMS_HASH_MLDSA_PARMS_Unmarshal(&target->hashMldsaDetail, buffer, size);
+	break;
+#endif
+#if ALG_MLKEM
+      case TPM_ALG_MLKEM:
+	rc = TPMS_MLKEM_PARMS_Unmarshal(&target->mlkemDetail, buffer, size);
 	break;
 #endif
       default:
@@ -4635,6 +4767,21 @@ TPMU_SENSITIVE_COMPOSITE_Unmarshal(TPMU_SENSITIVE_COMPOSITE *target, BYTE **buff
 #if ALG_SYMCIPHER
       case TPM_ALG_SYMCIPHER:
 	rc = TPM2B_SYM_KEY_Unmarshal(&target->sym, buffer, size);
+	break;
+#endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	rc = TPM2B_PRIVATE_KEY_MLDSA_Unmarshal(&target->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	rc = TPM2B_PRIVATE_KEY_MLDSA_Unmarshal(&target->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_MLKEM
+      case TPM_ALG_MLKEM:
+	rc = TPM2B_PRIVATE_KEY_MLKEM_Unmarshal(&target->mlkem, buffer, size);
 	break;
 #endif
       default:

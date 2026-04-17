@@ -1,0 +1,93 @@
+# ============================================================================
+# pqctoday-tpm — .gitignore
+# ============================================================================
+
+# ---- C/C++ build artifacts ----
+*.o
+*.lo
+*.la
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.obj
+*.pdb
+*.dSYM/
+
+# ---- Autotools (libtpms + swtpm) ----
+# We track configure.ac, Makefile.am, *.m4 but NOT generated outputs.
+.deps/
+.libs/
+autom4te.cache/
+aclocal.m4
+config.log
+config.status
+config.guess
+config.sub
+configure
+depcomp
+install-sh
+missing
+ltmain.sh
+libtool
+Makefile
+Makefile.in
+stamp-h1
+*.in.in
+
+# Allow template files that ship under upstream trees
+!libtpms/Makefile.am
+!swtpm/Makefile.am
+
+# ---- CMake (top-level wrapper + WASM later) ----
+build/
+build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+_deps/
+
+# ---- WASM / Emscripten (Phase 5) ----
+dist/
+node_modules/
+*.wasm.map
+emsdk/
+.emscripten_cache/
+
+# ---- Docker ----
+.docker-cache/
+
+# ---- Editor + OS ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- Python (tooling + test harnesses) ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- TPM state + test artifacts ----
+/tmp/tpm/
+*.ctx
+*.pub
+*.priv
+sig.*
+pub.*
+priv.*
+
+# ---- OpenSSL build cache (if cached outside Docker) ----
+/opt/openssl/
+
+# ---- patch quilt working files ----
+patches/.pc/
+patches/series.local

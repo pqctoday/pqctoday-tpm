@@ -158,10 +158,19 @@ typedef UINT16                          TPM_ALG_ID;
 #define     ALG_ECB_VALUE               0x0044
 #define TPM_ALG_ECB                     (TPM_ALG_ID)(ALG_ECB_VALUE)
 
+/* Post-quantum algorithms — TCG TPM 2.0 Library Specification V1.85 RC4.
+ * Cross-referenced against wolfTPM PR #445 (TCG Algorithm Registry v2.0). */
+#define     ALG_MLKEM_VALUE             0x00A0
+#define TPM_ALG_MLKEM                   (TPM_ALG_ID)(ALG_MLKEM_VALUE)
+#define     ALG_MLDSA_VALUE             0x00A1
+#define TPM_ALG_MLDSA                   (TPM_ALG_ID)(ALG_MLDSA_VALUE)
+#define     ALG_HASH_MLDSA_VALUE        0x00A2
+#define TPM_ALG_HASH_MLDSA              (TPM_ALG_ID)(ALG_HASH_MLDSA_VALUE)
+
 /* Values derived from Table 1:2 */
 #define     ALG_FIRST_VALUE             0x0001
 #define TPM_ALG_FIRST                   (TPM_ALG_ID)(ALG_FIRST_VALUE)
-#define     ALG_LAST_VALUE              0x0044
+#define     ALG_LAST_VALUE              0x00A2
 #define TPM_ALG_LAST                    (TPM_ALG_ID)(ALG_LAST_VALUE)
 
 /* TCG Algorithm Registry: Table 1:3 - Definition of TPM_ECC_CURVE Constants */

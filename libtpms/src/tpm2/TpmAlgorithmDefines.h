@@ -397,4 +397,48 @@ typedef TPM2B_MAX_HASH_BLOCK    TPM2B_HASH_BLOCK;
 #if MAX_SYM_KEY_BITS == 0 || MAX_SYM_BLOCK_SIZE == 0
 #   error Bad size for MAX_SYM_KEY_BITS or MAX_SYM_BLOCK
 #endif
+
+//
+// Post-Quantum Algorithm Size Constants — TCG TPM 2.0 Library Spec V1.85 RC4
+// Tables 204 (ML-KEM) and 207 (ML-DSA). Values cross-referenced with
+// wolfTPM PR #445 and FIPS 203/204.
+//
+// Private keys are stored in seed form (32 B for ML-DSA, 64 B for ML-KEM)
+// per TCG V1.85 §16.x, not expanded private-key form. The seed is the
+// minimum that fully determines the keypair, and the provider (OpenSSL
+// EVP ≥ 3.6) expands it deterministically on each use.
+//
+#if ALG_MLDSA
+#define MLDSA_44_PUBLIC_KEY_SIZE        1312
+#define MLDSA_65_PUBLIC_KEY_SIZE        1952
+#define MLDSA_87_PUBLIC_KEY_SIZE        2592
+#define MLDSA_44_SIGNATURE_SIZE         2420
+#define MLDSA_65_SIGNATURE_SIZE         3309
+#define MLDSA_87_SIGNATURE_SIZE         4627
+#define MLDSA_PRIVATE_SEED_SIZE           32  /* ξ (xi), all parameter sets */
+#define MAX_MLDSA_PUB_SIZE              MLDSA_87_PUBLIC_KEY_SIZE
+#define MAX_MLDSA_SIG_SIZE              MLDSA_87_SIGNATURE_SIZE
+#define MAX_MLDSA_PRIV_SEED_SIZE        MLDSA_PRIVATE_SEED_SIZE
+#endif // ALG_MLDSA
+
+#if ALG_MLKEM
+#define MLKEM_512_PUBLIC_KEY_SIZE        800
+#define MLKEM_768_PUBLIC_KEY_SIZE       1184
+#define MLKEM_1024_PUBLIC_KEY_SIZE      1568
+#define MLKEM_512_CIPHERTEXT_SIZE        768
+#define MLKEM_768_CIPHERTEXT_SIZE       1088
+#define MLKEM_1024_CIPHERTEXT_SIZE      1568
+#define MLKEM_SHARED_SECRET_SIZE          32  /* all parameter sets */
+#define MLKEM_PRIVATE_SEED_SIZE           64  /* d || z, all parameter sets */
+#define MAX_MLKEM_PUB_SIZE              MLKEM_1024_PUBLIC_KEY_SIZE
+#define MAX_MLKEM_CT_SIZE               MLKEM_1024_CIPHERTEXT_SIZE
+#define MAX_MLKEM_PRIV_SEED_SIZE        MLKEM_PRIVATE_SEED_SIZE
+#define MAX_SHARED_SECRET_SIZE          MLKEM_SHARED_SECRET_SIZE
+#endif // ALG_MLKEM
+
+/* Domain separation context for ML-DSA sign/verify — V1.85 Table 211. */
+#if ALG_MLDSA || ALG_HASH_MLDSA
+#define MAX_SIGNATURE_CTX_SIZE           255
+#endif
+
 #endif // _TPM_ALGORITHM_DEFINES_H_

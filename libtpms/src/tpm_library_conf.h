@@ -50,8 +50,17 @@
 /* need to restrict the maximum size of keys to cap the below blobs */
 #define TPM_RSA_KEY_LENGTH_MAX     2048
 
-/* maximum size of the IO buffer used for requests and responses */
-#define TPM_BUFFER_MAX             4096
+/* maximum size of the IO buffer used for requests and responses.
+ *
+ * Enlarged from 4096 → 8192 for TCG TPM 2.0 Library Specification V1.85
+ * post-quantum algorithms. ML-DSA-87 signatures alone can reach 4627 bytes
+ * (FIPS 204 §7.6 Table 3); combined with TPM headers and authorization
+ * sessions, V1.85 commands routinely exceed the legacy 4 KB limit.
+ *
+ * Downstream callers (swtpm) can request smaller buffers at runtime via
+ * TPMLIB_SetBufferSize(); this constant is the compile-time upper bound.
+ */
+#define TPM_BUFFER_MAX             8192
 
 /*
  * Below the following acronyms are used to identify what

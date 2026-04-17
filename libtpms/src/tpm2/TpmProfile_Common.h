@@ -231,6 +231,13 @@
 #define ALG_XMSS                            ALG_NO
 
 //***********************************************
+// Defines for Post-Quantum Algorithms (TCG TPM 2.0 V1.85)
+//***********************************************
+#define ALG_MLKEM                           ALG_YES
+#define ALG_MLDSA                           ALG_YES
+#define ALG_HASH_MLDSA                      ALG_YES
+
+//***********************************************
 // Defines for Keyed Hashes
 //***********************************************
 #define ALG_KEYEDHASH                       ALG_YES

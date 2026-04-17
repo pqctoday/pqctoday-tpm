@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  OPENSSL_VERSION: 3.6.2
+
+jobs:
+  build-and-test:
+    name: Build libtpms + swtpm (PQC-enabled OpenSSL)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential autoconf automake libtool pkg-config \
+            libjson-glib-dev libglib2.0-dev libtasn1-6-dev libseccomp-dev \
+            expect gawk socat tpm2-tools python3
+
+      - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
+        id: cache-openssl
+        uses: actions/cache@v4
+        with:
+          path: /opt/openssl
+          key: openssl-${{ env.OPENSSL_VERSION }}-${{ runner.os }}
+
+      - name: Build OpenSSL ${{ env.OPENSSL_VERSION }} from source
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSLO "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
+          tar xf "openssl-${OPENSSL_VERSION}.tar.gz"
+          cd "openssl-${OPENSSL_VERSION}"
+          ./Configure --prefix=/opt/openssl --libdir=lib64 shared
+          make -j"$(nproc)"
+          sudo make install_sw
+
+      - name: Register OpenSSL library path
+        run: |
+          echo '/opt/openssl/lib64' | sudo tee /etc/ld.so.conf.d/openssl.conf
+          sudo ldconfig
+          /opt/openssl/bin/openssl version -a
+
+      - name: Verify OpenSSL PQC provider surface
+        run: |
+          /opt/openssl/bin/openssl list -kem-algorithms | grep -i 'ML-KEM'
+          /opt/openssl/bin/openssl list -signature-algorithms | grep -iE 'ML-DSA|HASH-ML-DSA'
+
+      - name: Build libtpms
+        working-directory: libtpms
+        env:
+          PKG_CONFIG_PATH: /opt/openssl/lib64/pkgconfig
+          CFLAGS: -I/opt/openssl/include
+          LDFLAGS: -L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64
+        run: |
+          ./autogen.sh
+          ./configure --with-tpm2 --with-openssl
+          make -j"$(nproc)"
+          make check
+
+      - name: Install libtpms (so swtpm can link)
+        working-directory: libtpms
+        run: sudo make install && sudo ldconfig
+
+      - name: Build swtpm
+        working-directory: swtpm
+        env:
+          PKG_CONFIG_PATH: /opt/openssl/lib64/pkgconfig:/usr/local/lib/pkgconfig
+          LDFLAGS: -L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64
+        run: |
+          ./autogen.sh --with-openssl
+          make -j"$(nproc)"
+
+      - name: Smoke test — swtpm socket + tpm2_startup
+        working-directory: swtpm
+        env:
+          LD_LIBRARY_PATH: /opt/openssl/lib64:/usr/local/lib
+        run: |
+          mkdir -p /tmp/tpmstate
+          ./src/swtpm/swtpm socket --tpm2 \
+            --server port=2321 --ctrl type=tcp,port=2322 \
+            --flags not-need-init --tpmstate dir=/tmp/tpmstate &
+          SWTPM_PID=$!
+          sleep 1
+          export TPM2TOOLS_TCTI="swtpm:port=2321"
+          tpm2_startup -c
+          tpm2_getcap algorithms | head -40
+          kill "$SWTPM_PID" || true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            libtpms/config.log
+            swtpm/config.log
+            libtpms/tests/*.log

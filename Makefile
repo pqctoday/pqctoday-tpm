@@ -32,7 +32,8 @@ SOFTHSMV3_DIR ?= $(abspath $(PWD)/../softhsmv3)
 
 crossval: crossval-build
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
-	    bash -c 'tests/crossval/build/test_pqc_crossval && \
+	    bash -c 'cd libtpms && make install > /dev/null 2>&1 && ldconfig && cd - && \
+	             tests/crossval/build/test_pqc_crossval && \
 	             tests/crossval/build/test_tpm_roundtrip'
 
 crossval-softhsm: crossval-build
@@ -47,7 +48,8 @@ crossval-softhsm: crossval-build
 	    -e SOFTHSM2_CONF=/tmp/softhsm2.conf \
 	    -e PQCTODAY_TPM_PKCS11_MODULE=/softhsmv3/build-pqctoday/src/lib/libsofthsmv3.so \
 	    -w /workspace pqctoday-tpm-dev \
-	    bash -c 'mkdir -p /tmp/tokens && \
+	    bash -c 'cd libtpms && make install > /dev/null 2>&1 && ldconfig && cd - && \
+	             mkdir -p /tmp/tokens && \
 	             printf "directories.tokendir = /tmp/tokens\nobjectstore.backend = file\nlog.level = ERROR\n" > /tmp/softhsm2.conf && \
 	             tests/crossval/build/test_pqc_crossval && \
 	             tests/crossval/build/test_tpm_roundtrip'

@@ -173,6 +173,24 @@ typedef UINT16                          TPM_ALG_ID;
 #define     ALG_LAST_VALUE              0x00A2
 #define TPM_ALG_LAST                    (TPM_ALG_ID)(ALG_LAST_VALUE)
 
+/* Post-quantum parameter-set identifiers — TCG V1.85 RC4 Part 2 §11.
+ * Values per wolfTPM PR #445 (TCG Algorithm Registry v2.0). */
+#if ALG_MLDSA || ALG_HASH_MLDSA
+typedef UINT16                              TPMI_MLDSA_PARAMETER_SET;
+#define TPM_MLDSA_NONE                  (TPMI_MLDSA_PARAMETER_SET)(0x0000)
+#define TPM_MLDSA_44                    (TPMI_MLDSA_PARAMETER_SET)(0x0001)
+#define TPM_MLDSA_65                    (TPMI_MLDSA_PARAMETER_SET)(0x0002)
+#define TPM_MLDSA_87                    (TPMI_MLDSA_PARAMETER_SET)(0x0003)
+#endif
+
+#if ALG_MLKEM
+typedef UINT16                              TPMI_MLKEM_PARAMETER_SET;
+#define TPM_MLKEM_NONE                  (TPMI_MLKEM_PARAMETER_SET)(0x0000)
+#define TPM_MLKEM_512                   (TPMI_MLKEM_PARAMETER_SET)(0x0001)
+#define TPM_MLKEM_768                   (TPMI_MLKEM_PARAMETER_SET)(0x0002)
+#define TPM_MLKEM_1024                  (TPMI_MLKEM_PARAMETER_SET)(0x0003)
+#endif
+
 /* TCG Algorithm Registry: Table 1:3 - Definition of TPM_ECC_CURVE Constants */
 typedef UINT16              TPM_ECC_CURVE;
 #define TYPE_OF_TPM_ECC_CURVE   UINT16
@@ -2162,6 +2180,43 @@ typedef union {
 } TPM2B_ENCRYPTED_SECRET;
 /* Table 2:183 - Definition of TPMI_ALG_PUBLIC Type  */
 typedef  TPM_ALG_ID         TPMI_ALG_PUBLIC;
+/* Post-quantum TPM2B buffer types — TCG V1.85 RC4 Part 2 Tables 205-210.
+ * Private keys are stored as seeds per V1.85 (32 B ξ for ML-DSA, 64 B d||z
+ * for ML-KEM) — the OpenSSL 3.6+ EVP provider expands on demand. */
+#if ALG_MLDSA || ALG_HASH_MLDSA
+typedef union {
+    struct {
+	UINT16                  size;
+	BYTE                    buffer[MAX_MLDSA_PUB_SIZE];     /* 2592, Table 207 */
+    }            t;
+    TPM2B        b;
+} TPM2B_PUBLIC_KEY_MLDSA;
+typedef union {
+    struct {
+	UINT16                  size;                           /* shall be 32 */
+	BYTE                    buffer[MAX_MLDSA_PRIV_SEED_SIZE]; /* 32 (ξ), Table 210 */
+    }            t;
+    TPM2B        b;
+} TPM2B_PRIVATE_KEY_MLDSA;
+#endif
+
+#if ALG_MLKEM
+typedef union {
+    struct {
+	UINT16                  size;
+	BYTE                    buffer[MAX_MLKEM_PUB_SIZE];     /* 1568, Table 204 */
+    }            t;
+    TPM2B        b;
+} TPM2B_PUBLIC_KEY_MLKEM;
+typedef union {
+    struct {
+	UINT16                  size;                           /* shall be 64 */
+	BYTE                    buffer[MAX_MLKEM_PRIV_SEED_SIZE]; /* 64 (d||z) */
+    }            t;
+    TPM2B        b;
+} TPM2B_PRIVATE_KEY_MLKEM;
+#endif
+
 /* Table 2:184 - Definition of TPMU_PUBLIC_ID Union  */
 typedef union {
 #if 	ALG_KEYEDHASH
@@ -2176,6 +2231,12 @@ typedef union {
 #if 	ALG_ECC
     TPMS_ECC_POINT          ecc;
 #endif   // ALG_ECC
+#if 	ALG_MLDSA || ALG_HASH_MLDSA
+    TPM2B_PUBLIC_KEY_MLDSA  mldsa;  /* TPM_ALG_MLDSA, TPM_ALG_HASH_MLDSA */
+#endif
+#if 	ALG_MLKEM
+    TPM2B_PUBLIC_KEY_MLKEM  mlkem;  /* TPM_ALG_MLKEM */
+#endif
     TPMS_DERIVE             derive;
 } TPMU_PUBLIC_ID;
 /* Table 2:185 - Definition of TPMS_KEYEDHASH_PARMS Structure  */
@@ -2201,6 +2262,25 @@ typedef struct {
     TPMI_ECC_CURVE          curveID;
     TPMT_KDF_SCHEME         kdf;
 } TPMS_ECC_PARMS;
+
+/* Post-quantum parameter structures — TCG V1.85 RC4 Part 2 Tables 228-229. */
+#if ALG_MLDSA
+typedef struct {
+    TPMI_MLDSA_PARAMETER_SET    parameterSet;  /* TPM_MLDSA_{44,65,87} */
+} TPMS_MLDSA_PARMS;
+#endif
+#if ALG_HASH_MLDSA
+typedef struct {
+    TPMI_MLDSA_PARAMETER_SET    parameterSet;
+    TPMI_ALG_HASH               hashAlg;       /* pre-hash used in HashML-DSA */
+} TPMS_HASH_MLDSA_PARMS;
+#endif
+#if ALG_MLKEM
+typedef struct {
+    TPMI_MLKEM_PARAMETER_SET    parameterSet;  /* TPM_MLKEM_{512,768,1024} */
+} TPMS_MLKEM_PARMS;
+#endif
+
 /* Table 2:189 - Definition of TPMU_PUBLIC_PARMS Union  */
 typedef union {
 #if 	ALG_KEYEDHASH
@@ -2215,6 +2295,15 @@ typedef union {
 #if 	ALG_ECC
     TPMS_ECC_PARMS          eccDetail;
 #endif   // ALG_ECC
+#if 	ALG_MLDSA
+    TPMS_MLDSA_PARMS        mldsaDetail;       /* TPM_ALG_MLDSA */
+#endif
+#if 	ALG_HASH_MLDSA
+    TPMS_HASH_MLDSA_PARMS   hashMldsaDetail;   /* TPM_ALG_HASH_MLDSA */
+#endif
+#if 	ALG_MLKEM
+    TPMS_MLKEM_PARMS        mlkemDetail;       /* TPM_ALG_MLKEM */
+#endif
     TPMS_ASYM_PARMS         asymDetail;
 } TPMU_PUBLIC_PARMS;
 /* Table 2:190 - Definition of TPMT_PUBLIC_PARMS Structure  */
@@ -2266,6 +2355,12 @@ typedef union {
 #if 	ALG_SYMCIPHER
     TPM2B_SYM_KEY                    sym;
 #endif   // ALG_SYMCIPHER
+#if 	ALG_MLDSA || ALG_HASH_MLDSA
+    TPM2B_PRIVATE_KEY_MLDSA          mldsa;    /* 32-byte seed ξ (TCG V1.85) */
+#endif
+#if 	ALG_MLKEM
+    TPM2B_PRIVATE_KEY_MLKEM          mlkem;    /* 64-byte seed d‖z (TCG V1.85) */
+#endif
     TPM2B_PRIVATE_VENDOR_SPECIFIC    any;
 } TPMU_SENSITIVE_COMPOSITE;
 /* Table 2:196 - Definition of TPMT_SENSITIVE Structure  */

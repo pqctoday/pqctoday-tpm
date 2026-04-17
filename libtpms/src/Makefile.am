@@ -319,6 +319,8 @@ noinst_HEADERS += \
 	tpm2/crypto/CryptPrimeSieve_fp.h \
 	tpm2/crypto/CryptRand_fp.h \
 	tpm2/crypto/CryptRand.h \
+	tpm2/crypto/CryptMlDsa_fp.h \
+	tpm2/crypto/CryptMlKem_fp.h \
 	tpm2/crypto/CryptRsa_fp.h \
 	tpm2/crypto/CryptRsa.h \
 	tpm2/crypto/CryptSelfTest_fp.h \
@@ -598,6 +600,8 @@ libtpms_tpm2_la_SOURCES += \
 	tpm2/crypto/openssl/CryptPrime.c \
 	tpm2/crypto/openssl/CryptPrimeSieve.c \
 	tpm2/crypto/openssl/CryptRand.c \
+	tpm2/crypto/openssl/CryptMlDsa.c \
+	tpm2/crypto/openssl/CryptMlKem.c \
 	tpm2/crypto/openssl/CryptRsa.c \
 	tpm2/crypto/openssl/CryptSmac.c \
 	tpm2/crypto/openssl/CryptSym.c \

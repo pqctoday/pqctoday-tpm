@@ -1186,6 +1186,19 @@ CryptCreateObject(OBJECT*                object,  // IN: new object structure po
 	    result = CryptEccGenerateKey(publicArea, sensitive, rand);
 	    break;
 #endif  // ALG_ECC
+#if ALG_MLDSA || ALG_HASH_MLDSA
+	    // Create ML-DSA key (FIPS 204, TCG V1.85)
+	  case TPM_ALG_MLDSA:
+	  case TPM_ALG_HASH_MLDSA:
+	    result = CryptMlDsaGenerateKey(publicArea, sensitive, object, rand);
+	    break;
+#endif  // ALG_MLDSA || ALG_HASH_MLDSA
+#if ALG_MLKEM
+	    // Create ML-KEM key (FIPS 203, TCG V1.85)
+	  case TPM_ALG_MLKEM:
+	    result = CryptMlKemGenerateKey(publicArea, sensitive, object, rand);
+	    break;
+#endif  // ALG_MLKEM
 	  case TPM_ALG_SYMCIPHER:
 	    result = CryptGenerateKeySymmetric(
 					       publicArea, sensitive, sensitiveCreate, rand);
@@ -1661,6 +1674,12 @@ CryptSign(OBJECT*          signKey,     // IN: signing key
 				  signature, signKey, digest, (TPMT_ECC_SCHEME*)signScheme, NULL);
 	    break;
 #endif  // ALG_ECC
+#if ALG_MLDSA || ALG_HASH_MLDSA
+	  case TPM_ALG_MLDSA:
+	  case TPM_ALG_HASH_MLDSA:
+	    result = CryptMlDsaSign(signature, signKey, digest, NULL);
+	    break;
+#endif  // ALG_MLDSA || ALG_HASH_MLDSA
 	  case TPM_ALG_KEYEDHASH:
 	    result = CryptHmacSign(signature, signKey, digest);
 	    break;
@@ -1721,6 +1740,12 @@ CryptValidateSignature(TPMI_DH_OBJECT  keyHandle,  // IN: The handle of sign key
 	    result = CryptEccValidateSignature(signature, signObject, digest);
 	    break;
 #endif  // ALG_ECC
+#if ALG_MLDSA || ALG_HASH_MLDSA
+	  case TPM_ALG_MLDSA:
+	  case TPM_ALG_HASH_MLDSA:
+	    result = CryptMlDsaValidateSignature(signature, signObject, digest);
+	    break;
+#endif  // ALG_MLDSA || ALG_HASH_MLDSA
 
 	  case TPM_ALG_KEYEDHASH:
 	    if(signObject->attributes.publicOnly)

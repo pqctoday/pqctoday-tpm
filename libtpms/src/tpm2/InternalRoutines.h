@@ -132,6 +132,12 @@
 #include "CryptEccKeyExchange_fp.h"
 #include "CryptEccCrypt_fp.h"
 #endif
+#if ALG_MLDSA || ALG_HASH_MLDSA
+#include "CryptMlDsa_fp.h"
+#endif
+#if ALG_MLKEM
+#include "CryptMlKem_fp.h"
+#endif
 #if CC_MAC || CC_MAC_Start
 #   include "CryptSmac_fp.h"
 #   if ALG_CMAC

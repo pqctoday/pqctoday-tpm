@@ -29,16 +29,13 @@ target_link_libraries(test_pqc_crossval PRIVATE
 
 target_compile_options(test_pqc_crossval PRIVATE -Wall -Wextra -Wno-unused-function)
 
-# Direct-libtpms TPM command-layer roundtrip test — requires libtpms installed
-# via `make install` inside the container (header + .so in /usr/local).
+# Direct-libtpms TPM command-layer roundtrip test.
+# Requires libtpms installed via `make install` inside the container.
 #
-# NOTE: EXCLUDE_FROM_ALL because in-process libtpms init with in-memory NV
-# callbacks still fails at NvPowerOn (NV header magic mismatch from zeroed
-# state blob). Full bootstrapping requires invoking TPMLIB_SetState with a
-# valid PERMANENT state blob before TPMLIB_MainInit, or routing NV through
-# a file backend that libtpms pre-initializes. Deferred to next session.
-# Build explicitly with `cmake --build build --target test_tpm_roundtrip`.
-add_executable(test_tpm_roundtrip EXCLUDE_FROM_ALL
+# Uses file-backed NV in a mkdtemp() directory: no custom callbacks.
+# libtpms manufacture writes NVChip; second _plat__NVEnable_NVChipFile()
+# call short-circuits (s_NvFile != NULL) so manufactured state is preserved.
+add_executable(test_tpm_roundtrip
     src/test_tpm_roundtrip.c
 )
 target_compile_options(test_tpm_roundtrip PRIVATE -Wall -Wextra)

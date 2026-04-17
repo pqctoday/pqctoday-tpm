@@ -32,6 +32,7 @@ TPMALGDEF="libtpms/src/tpm2/TpmAlgorithmDefines.h"
 TPMPROF="libtpms/src/tpm2/TpmProfile_Common.h"
 TPMLIBCONF="libtpms/src/tpm_library_conf.h"
 CROSSVAL_BIN="tests/crossval/build/test_pqc_crossval"
+ROUNDTRIP_BIN="tests/crossval/build/test_tpm_roundtrip"
 
 PASS=0; FAIL=0; SKIP=0
 
@@ -317,6 +318,27 @@ if [[ -x "$CROSSVAL_BIN" ]]; then
     fi
 else
     skip "cross-val binary not built — run 'make crossval-build' first"
+fi
+
+# §5 / §15 / §14 — End-to-end TPM2_CreatePrimary(MLDSA-65) via direct libtpms
+section "Runtime — TPM2_CreatePrimary(MLDSA-65) end-to-end (libtpms direct)"
+
+if [[ -x "$ROUNDTRIP_BIN" ]]; then
+    if "$ROUNDTRIP_BIN" > /tmp/roundtrip.out 2>&1; then
+        rt_pass=$(grep -c "^\[PASS\]" /tmp/roundtrip.out 2>/dev/null) || rt_pass=0
+        rt_fail=$(grep -c "^\[FAIL\]" /tmp/roundtrip.out 2>/dev/null) || rt_fail=0
+        if [[ "$rt_fail" == "0" ]]; then
+            pass "TPM2_CreatePrimary(MLDSA-65): $rt_pass subtests green — ML-DSA-65 pk=1952 B FIPS 204 compliant"
+        else
+            fail "TPM2_CreatePrimary(MLDSA-65): $rt_fail subtests FAILED"
+            sed 's/^/         /' /tmp/roundtrip.out
+        fi
+    else
+        fail "test_tpm_roundtrip exited non-zero"
+        sed 's/^/         /' /tmp/roundtrip.out
+    fi
+else
+    skip "test_tpm_roundtrip not built — run 'make crossval-build' first"
 fi
 
 # ----------------------------------------------------------------------------

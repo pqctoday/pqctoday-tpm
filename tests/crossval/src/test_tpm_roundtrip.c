@@ -1,11 +1,19 @@
 /*
- * test_tpm_roundtrip.c — direct libtpms TPM2_Create/Sign/VerifySignature
- * for TPM_ALG_MLDSA, bypassing tpm2-tools (which lacks PQC template support).
+ * test_tpm_roundtrip.c — direct libtpms TPM2_CreatePrimary for TPM_ALG_MLDSA,
+ * bypassing tpm2-tools (which lacks PQC template support).
  *
  * Links libtpms.so directly, feeds raw TPM command bytes via TPMLIB_Process
  * and parses the raw response. This validates the full marshal + crypto
  * pipeline — from TPM_ALG_ID selector through CryptUtil dispatch to
- * CryptMlDsa.c and back — without relying on tpm2-tools recognizing MLDSA.
+ * CryptMlDsa.c and back — without relying on tpm2-tools recognising MLDSA.
+ *
+ * NV strategy: use file-backed NV in a temp directory (no custom callbacks).
+ * With custom in-memory callbacks, libtpms_plat__NVEnable() is called twice
+ * during MainInit: once for manufacture (zeroes s_NV), and once from
+ * _TPM_Init() via _rpc__Signal_NvOn(). With callbacks, the second call
+ * re-zeroes s_NV because nv_load still returns TPM_RETRY (nv_store hasn't
+ * committed yet). File-backed NV avoids this: s_NvFile != NULL short-circuits
+ * the second _plat__NVEnable_NVChipFile() call, preserving manufactured state.
  *
  * Copyright 2026 PQC Today. BSD-3-Clause.
  */
@@ -14,60 +22,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <libtpms/tpm_types.h>
 #include <libtpms/tpm_error.h>
 #include <libtpms/tpm_library.h>
-
-/* In-memory NV callbacks so libtpms can store/retrieve state without
- * touching the filesystem. A single in-memory slab is enough for a
- * one-shot process that sends a few commands and exits. */
-static uint8_t *g_nv_data = NULL;
-static uint32_t g_nv_size = 0;
-
-static TPM_RESULT nv_init(void) { return TPM_SUCCESS; }
-
-static TPM_RESULT
-nv_load(unsigned char **data, uint32_t *length,
-        uint32_t tpm_number, const char *name)
-{
-    (void)tpm_number; (void)name;
-    if (g_nv_data == NULL) {
-        /* First boot — libtpms's LibtpmsCallbacks.c treats TPM_RETRY
-         * as "initialize fresh NV, fall back to storedata later". */
-        *data = NULL;
-        *length = 0;
-        return TPM_RETRY;
-    }
-    *data = malloc(g_nv_size);
-    if (!*data) return TPM_FAIL;
-    memcpy(*data, g_nv_data, g_nv_size);
-    *length = g_nv_size;
-    return TPM_SUCCESS;
-}
-
-static TPM_RESULT
-nv_store(const unsigned char *data, uint32_t length,
-         uint32_t tpm_number, const char *name)
-{
-    (void)tpm_number; (void)name;
-    free(g_nv_data);
-    g_nv_data = malloc(length);
-    if (!g_nv_data) return TPM_FAIL;
-    memcpy(g_nv_data, data, length);
-    g_nv_size = length;
-    return TPM_SUCCESS;
-}
-
-static TPM_RESULT
-nv_delete(uint32_t tpm_number, const char *name, TPM_BOOL mustExist)
-{
-    (void)tpm_number; (void)name; (void)mustExist;
-    free(g_nv_data);
-    g_nv_data = NULL;
-    g_nv_size = 0;
-    return TPM_SUCCESS;
-}
 
 /* Minimal TPM 2.0 structure tags / command codes (TCG V1.85 Part 2). */
 #define TPM_ST_NO_SESSIONS        0x8001
@@ -118,7 +77,7 @@ send_command(uint8_t *cmd, uint32_t cmd_len, uint8_t *resp_buf, uint32_t *resp_l
     return rc;
 }
 
-/* Parse: tag (2), commandSize (4), responseCode (4). Return responseCode. */
+/* Parse tag(2) + size(4) + responseCode(4). Return responseCode. */
 static uint32_t
 response_rc(const uint8_t *buf, uint32_t len)
 {
@@ -126,24 +85,41 @@ response_rc(const uint8_t *buf, uint32_t len)
     return get_u32(buf + 6);
 }
 
+/* Remove a file by name, ignoring errors. */
+static void rm_f(const char *path) { (void)remove(path); }
+
 int main(void)
 {
-    struct libtpms_callbacks cbs = {
-        .sizeOfStruct            = sizeof(cbs),
-        .tpm_nvram_init          = nv_init,
-        .tpm_nvram_loaddata      = nv_load,
-        .tpm_nvram_storedata     = nv_store,
-        .tpm_nvram_deletename    = nv_delete,
-    };
-    if (TPMLIB_RegisterCallbacks(&cbs) != TPM_SUCCESS) {
-        FAIL("TPMLIB_RegisterCallbacks");
+    /* Create a temp directory and chdir into it so libtpms's file-backed NV
+     * (NVChip file) lands there and is cleaned up on exit. */
+    char tmpdir[] = "/tmp/tpm2-rtrip-XXXXXX";
+    if (mkdtemp(tmpdir) == NULL) {
+        perror("mkdtemp");
+        FAIL("mkdtemp");
         return 1;
     }
+    /* Save original cwd so we can clean up tmpdir later. */
+    char origcwd[4096];
+    if (getcwd(origcwd, sizeof(origcwd)) == NULL) {
+        perror("getcwd");
+        FAIL("getcwd");
+        return 1;
+    }
+    if (chdir(tmpdir) != 0) {
+        perror("chdir");
+        FAIL("chdir %s", tmpdir);
+        return 1;
+    }
+
+    /* No custom NV callbacks: libtpms uses file-backed NV (NVChip in cwd).
+     * Manufacture writes NVChip; second _plat__NVEnable_NVChipFile() call is
+     * a no-op (s_NvFile != NULL), so manufactured state is preserved. */
     TPMLIB_ChooseTPMVersion(TPMLIB_TPM_VERSION_2);
     if (TPMLIB_MainInit() != TPM_SUCCESS) {
         FAIL("TPMLIB_MainInit");
-        return 1;
+        goto cleanup;
     }
+    PASS("TPMLIB_MainInit (file-backed NV in %s)", tmpdir);
 
     uint8_t cmd[1024], resp[16384];
     uint32_t resp_len;
@@ -155,11 +131,12 @@ int main(void)
         p = put_u32(p, 0);                  /* placeholder size */
         p = put_u32(p, TPM_CC_Startup);
         p = put_u16(p, 0);                  /* TPM_SU_CLEAR */
-        uint32_t len = p - cmd;
+        uint32_t len = (uint32_t)(p - cmd);
         put_u32(cmd + 2, len);
         resp_len = sizeof(resp);
-        if (send_command(cmd, len, resp, &resp_len) != 0 || response_rc(resp, resp_len) != 0) {
-            FAIL("TPM2_Startup rc=0x%x", response_rc(resp, resp_len));
+        if (send_command(cmd, len, resp, &resp_len) != 0
+                || response_rc(resp, resp_len) != 0) {
+            FAIL("TPM2_Startup(CLEAR) rc=0x%08x", response_rc(resp, resp_len));
             goto done;
         }
         PASS("TPM2_Startup(CLEAR)");
@@ -184,17 +161,17 @@ int main(void)
         p = put_u32(p, 0);                        /* size placeholder */
         p = put_u32(p, TPM_CC_CreatePrimary);
         p = put_u32(p, TPM_RH_OWNER);
-        /* auth area */
-        p = put_u32(p, 9);                        /* authSize = 9 for empty-password session */
+        /* auth area: 9 bytes for empty-password session */
+        p = put_u32(p, 9);
         p = put_u32(p, TPM_RS_PW);
         p = put_u16(p, 0);                        /* nonce size = 0 */
         *p++ = 0;                                 /* sessionAttributes = 0 */
         p = put_u16(p, 0);                        /* hmac size = 0 */
-        /* inSensitive = TPM2B_SENSITIVE_CREATE: size, then {userAuth(UINT16=0), data(UINT16=0)} */
-        p = put_u16(p, 4);                        /* total size of inner struct = 4 */
-        p = put_u16(p, 0);                        /* userAuth.size */
-        p = put_u16(p, 0);                        /* data.size */
-        /* inPublic = TPM2B_PUBLIC: size, then TPMT_PUBLIC */
+        /* inSensitive: size=4, userAuth.size=0, data.size=0 */
+        p = put_u16(p, 4);
+        p = put_u16(p, 0);
+        p = put_u16(p, 0);
+        /* inPublic: TPM2B_PUBLIC with TPMT_PUBLIC */
         uint8_t *pub_size_ptr = p;
         p = put_u16(p, 0);                        /* placeholder */
         uint8_t *pub_start = p;
@@ -204,67 +181,76 @@ int main(void)
                         TPMA_OBJECT_SENSITIVEDATAORIGIN |
                         TPMA_OBJECT_USERWITHAUTH | TPMA_OBJECT_SIGN);
         p = put_u16(p, 0);                        /* authPolicy size = 0 */
-        /* parameters: TPMS_MLDSA_PARMS { TPMI_MLDSA_PARAMETER_SET } */
+        /* TPMS_MLDSA_PARMS: one UINT16 parameterSet */
         p = put_u16(p, TPM_MLDSA_65);
-        /* unique: TPM2B_PUBLIC_KEY_MLDSA size = 0 (TPM will populate on keygen) */
+        /* unique: TPM2B_PUBLIC_KEY_MLDSA size = 0 (TPM populates on keygen) */
         p = put_u16(p, 0);
         put_u16(pub_size_ptr, (uint16_t)(p - pub_start));
         /* outsideInfo */
         p = put_u16(p, 0);
-        /* creationPCR */
+        /* creationPCR count=0 */
         p = put_u32(p, 0);
 
-        uint32_t len = p - cmd;
+        uint32_t len = (uint32_t)(p - cmd);
         put_u32(cmd + 2, len);
         resp_len = sizeof(resp);
-        int ioRc = send_command(cmd, len, resp, &resp_len);
+        int io_rc = send_command(cmd, len, resp, &resp_len);
         uint32_t rc = response_rc(resp, resp_len);
-        if (ioRc != 0 || rc != 0) {
+        if (io_rc != 0 || rc != 0) {
             FAIL("TPM2_CreatePrimary(MLDSA-65) rc=0x%08x", rc);
             goto done;
         }
-        PASS("TPM2_CreatePrimary(MLDSA-65) succeeded (response %u bytes)", resp_len);
+        PASS("TPM2_CreatePrimary(MLDSA-65) succeeded (%u byte response)", resp_len);
 
-        /* Parse response header: tag(2) + size(4) + rc(4) = 10 bytes.
-         * Then: TPM_HANDLE (new object), parameterSize(UINT32 in sessioned resp),
-         *       TPM2B_PUBLIC (outPublic), TPM2B_CREATION_DATA, TPM2B_DIGEST, TPMT_TK_CREATION,
-         *       TPM2B_NAME. We just check that outPublic contains a 1952-byte ML-DSA-65 pk. */
+        /* Parse the response to verify outPublic fields.
+         * Layout after header (10 B): new-handle(4), paramSize(4),
+         * TPM2B_PUBLIC{size(2), TPMT_PUBLIC{type(2), nameAlg(2),
+         * attributes(4), authPolicy(2+), parms(2), unique(2+pk)}}, ... */
         const uint8_t *q = resp + 10;
-        /* new-handle */
-        q += 4;
-        /* parameterSize (present because tag == TPM_ST_SESSIONS) */
-        q += 4;
-        /* TPM2B_PUBLIC: size, then TPMT_PUBLIC */
-        uint16_t outPubSize = get_u16(q); q += 2;
-        const uint8_t *pubStart = q;
-        uint16_t outType = get_u16(q); q += 2;
-        q += 2; /* nameAlg */
-        q += 4; /* objectAttributes */
-        uint16_t authPolicySz = get_u16(q); q += 2 + authPolicySz;
-        /* parameters: TPMS_MLDSA_PARMS — one UINT16 */
-        uint16_t ps = get_u16(q); q += 2;
-        /* unique: TPM2B_PUBLIC_KEY_MLDSA */
-        uint16_t pkSize = get_u16(q); q += 2;
+        q += 4;                              /* new-handle */
+        q += 4;                              /* parameterSize (TPM_ST_SESSIONS) */
+        uint16_t out_pub_sz = get_u16(q); q += 2;
+        (void)out_pub_sz;
+        const uint8_t *pub_start_r = q;
+        uint16_t out_type = get_u16(q); q += 2;
+        q += 2;                              /* nameAlg */
+        q += 4;                              /* objectAttributes */
+        uint16_t auth_pol_sz = get_u16(q); q += 2 + auth_pol_sz;
+        uint16_t ps = get_u16(q); q += 2;   /* TPMS_MLDSA_PARMS.parameterSet */
+        uint16_t pk_sz = get_u16(q);        /* unique.size */
+        (void)pub_start_r;
 
-        if (outType != TPM_ALG_MLDSA) {
-            FAIL("unexpected type in outPublic: 0x%04x", outType);
+        if (out_type != TPM_ALG_MLDSA) {
+            FAIL("outPublic.type=0x%04x expected TPM_ALG_MLDSA(0x%04x)",
+                 out_type, TPM_ALG_MLDSA);
             goto done;
         }
         if (ps != TPM_MLDSA_65) {
-            FAIL("unexpected parameterSet: 0x%04x", ps);
+            FAIL("outPublic parameterSet=0x%04x expected MLDSA_65(0x%04x)",
+                 ps, TPM_MLDSA_65);
             goto done;
         }
-        if (pkSize != 1952) {
-            FAIL("outPublic.unique.mldsa.size = %u, expected 1952 (ML-DSA-65 pk)", pkSize);
+        if (pk_sz != 1952) {
+            FAIL("outPublic.unique.size=%u, expected 1952 (ML-DSA-65 pk per FIPS 204)",
+                 pk_sz);
             goto done;
         }
-        PASS("outPublic: TPM_ALG_MLDSA, paramSet=65, pk=%u B — matches FIPS 204", pkSize);
-
-        (void)outPubSize; (void)pubStart;
+        PASS("outPublic: TPM_ALG_MLDSA, paramSet=MLDSA-65, pk=%u B — FIPS 204 compliant",
+             pk_sz);
     }
 
  done:
     TPMLIB_Terminate();
+
+ cleanup:
+    /* Clean up temp NV file and directory. */
+    if (chdir(origcwd) == 0) {
+        char nvpath[4096 + 8];
+        snprintf(nvpath, sizeof(nvpath), "%s/NVChip", tmpdir);
+        rm_f(nvpath);
+        rmdir(tmpdir);
+    }
+
     printf("\n%d passed, %d failed\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

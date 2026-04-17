@@ -32,7 +32,8 @@ SOFTHSMV3_DIR ?= $(abspath $(PWD)/../softhsmv3)
 
 crossval: crossval-build
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
-	    tests/crossval/build/test_pqc_crossval
+	    bash -c 'tests/crossval/build/test_pqc_crossval && \
+	             tests/crossval/build/test_tpm_roundtrip'
 
 crossval-softhsm: crossval-build
 	@echo "Running cross-val with softhsmv3 C++ engine at $(SOFTHSMV3_DIR)"
@@ -48,7 +49,8 @@ crossval-softhsm: crossval-build
 	    -w /workspace pqctoday-tpm-dev \
 	    bash -c 'mkdir -p /tmp/tokens && \
 	             printf "directories.tokendir = /tmp/tokens\nobjectstore.backend = file\nlog.level = ERROR\n" > /tmp/softhsm2.conf && \
-	             tests/crossval/build/test_pqc_crossval'
+	             tests/crossval/build/test_pqc_crossval && \
+	             tests/crossval/build/test_tpm_roundtrip'
 
 compliance: crossval-build
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \

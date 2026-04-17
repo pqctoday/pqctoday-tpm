@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libseccomp-dev \
         libgmp-dev \
         libgnutls28-dev \
+        libjson-c-dev \
         gnutls-bin \
         net-tools \
         iproute2 \

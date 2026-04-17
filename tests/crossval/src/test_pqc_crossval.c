@@ -24,6 +24,7 @@
 #include <stdint.h>
 
 #include "p11_helper.h"
+#include "kat_loader.h"
 
 /* ------------------------------------------------------------------ */
 /* Terminal output                                                     */
@@ -243,6 +244,64 @@ int main(int argc, char **argv)
         PASS("ML-KEM-1024 OpenSSL seed → encap → decap");
     else
         FAIL("ML-KEM-1024 OpenSSL seed → encap → decap");
+
+    /* ---- NIST ACVP KAT (keyGen) for ML-DSA ---- */
+    fprintf(stdout, "\n--- NIST ACVP ML-DSA keyGen KAT ---\n");
+    const char *vectors = getenv("PQCTODAY_TPM_ACVP_VECTORS");
+    if (!vectors || !*vectors) vectors = "tests/crossval/vectors";
+    char kat_path[512];
+    snprintf(kat_path, sizeof(kat_path),
+             "%s/ML-DSA-keyGen-FIPS204/internalProjection.json", vectors);
+
+    int kat_ok  = 0;
+    int kat_bad = 0;
+    int kat_cb(const kat_mldsa_keygen_t *v, void *u) {
+        (void)u;
+        EVP_PKEY     *pkey = NULL;
+        EVP_PKEY_CTX *ctx  = EVP_PKEY_CTX_new_from_name(NULL, v->param_set, NULL);
+        OSSL_PARAM    p[2];
+        uint8_t       derived[KAT_PK_MAX];
+        size_t        derived_len = sizeof(derived);
+        int           rc = 0;
+
+        if (!ctx || EVP_PKEY_fromdata_init(ctx) <= 0) goto done;
+        p[0] = OSSL_PARAM_construct_octet_string(
+                    OSSL_PKEY_PARAM_ML_DSA_SEED,
+                    (void *)v->seed, v->seed_len);
+        p[1] = OSSL_PARAM_construct_end();
+        if (EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_KEYPAIR, p) <= 0) goto done;
+        if (EVP_PKEY_get_octet_string_param(pkey, OSSL_PKEY_PARAM_PUB_KEY,
+                                             derived, sizeof(derived),
+                                             &derived_len) <= 0) goto done;
+        if (derived_len == v->pk_len &&
+            memcmp(derived, v->pk, derived_len) == 0) {
+            rc = 1;
+        }
+     done:
+        EVP_PKEY_free(pkey);
+        EVP_PKEY_CTX_free(ctx);
+        if (rc) {
+            kat_ok++;
+        } else {
+            kat_bad++;
+            if (kat_bad <= 3) {  /* cap noisy output */
+                fprintf(stdout, "[FAIL] %s tcId=%d — derived pk does not match NIST canonical\n",
+                        v->param_set, v->tc_id);
+            }
+        }
+        return 0;  /* continue iterating */
+    }
+
+    int total = kat_walk_mldsa_keygen(kat_path, kat_cb, NULL);
+    if (total < 0) {
+        FAIL("NIST ACVP vectors load failed from %s", kat_path);
+    } else if (kat_bad == 0) {
+        PASS("NIST ACVP ML-DSA keyGen: %d/%d vectors match canonical (44/65/87)",
+             kat_ok, total);
+    } else {
+        FAIL("NIST ACVP ML-DSA keyGen: %d passed, %d FAILED of %d",
+             kat_ok, kat_bad, total);
+    }
 
     /* ---- softhsmv3 cross-check ---- */
     const char *p11mod = getenv("PQCTODAY_TPM_PKCS11_MODULE");

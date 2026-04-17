@@ -5,19 +5,26 @@ project(pqctoday_tpm_crossval C)
 set(OPENSSL_USE_STATIC_LIBS FALSE)
 find_package(OpenSSL 3.5 REQUIRED)
 
+# json-c for NIST ACVP JSON vector parsing.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSONC REQUIRED json-c)
+
 add_executable(test_pqc_crossval
     src/test_pqc_crossval.c
     src/p11_helper.c
+    src/kat_loader.c
 )
 
 target_include_directories(test_pqc_crossval PRIVATE
     include
     ${OPENSSL_INCLUDE_DIR}
+    ${JSONC_INCLUDE_DIRS}
 )
 
 target_link_libraries(test_pqc_crossval PRIVATE
     OpenSSL::Crypto
-    ${CMAKE_DL_LIBS}   # for future p11_helper.c dlopen
+    ${CMAKE_DL_LIBS}   # for p11_helper.c dlopen
+    ${JSONC_LIBRARIES} # for kat_loader.c
 )
 
 target_compile_options(test_pqc_crossval PRIVATE -Wall -Wextra -Wno-unused-function)

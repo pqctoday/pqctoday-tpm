@@ -43,4 +43,13 @@ target_link_libraries(test_tpm_roundtrip PRIVATE
     tpms  # libtpms.so exports TPMLIB_MainInit / TPMLIB_Process / TPMLIB_Terminate
 )
 
+# tpm_bench — parameterized TPM2_CreatePrimary harness used by the
+# pqctoday-sandbox scenario 36 to drive the EK/SRK/AIK/IDevID migration
+# matrix against the real libtpms engine (no swtpm socket needed).
+add_executable(tpm_bench
+    src/tpm_bench.c
+)
+target_compile_options(tpm_bench PRIVATE -Wall -Wextra)
+target_link_libraries(tpm_bench PRIVATE tpms)
+
 # install into build dir; `make crossval` in the top-level Makefile runs the binary

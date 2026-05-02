@@ -84,6 +84,15 @@ venv/
 sig.*
 pub.*
 priv.*
+# libtpms file-backed NV state from local test runs
+NVChip
+
+# ---- Precompiled headers (clangd / IDE caches) ----
+*.pch
+
+# ---- External vendor checkouts (cross-check work) ----
+# Cloned manually; see tests/compliance/v185_wolftpm_compliance.sh for setup.
+vendor/
 
 # ---- OpenSSL build cache (if cached outside Docker) ----
 /opt/openssl/

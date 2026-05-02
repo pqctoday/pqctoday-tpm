@@ -102,6 +102,18 @@ BOOL IsDAExempted(TPM_HANDLE handle  // IN: entity handle
 	    // When this function is called, a persistent object will have been loaded
 	    // into an object slot and assigned a transient handle.
 	  case TPM_HT_TRANSIENT:
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+	    /* V1.85 Phase 4.1: PQC sequence objects are transient sequences
+	     * with no TPMA_OBJECT — treat them as DA-exempt (matches the
+	     * existing hash-sequence semantics, which are checked one level
+	     * up in CheckAuthSession before reaching ObjectGetPublicAttributes). */
+	    if(handle >= (TPM_HANDLE)0x80FF0000
+	       && handle <= (TPM_HANDLE)0x80FF00FF) {
+		result = TRUE;
+		break;
+	    }
+#endif
 	      {
 		  TPMA_OBJECT attributes = ObjectGetPublicAttributes(handle);
 		  result                 = IS_ATTRIBUTE(attributes, TPMA_OBJECT, noDA);
@@ -261,8 +273,17 @@ static BOOL IsPolicySessionRequired(COMMAND_INDEX commandIndex,  // IN: command 
 	    // requirement that a policy be used
 	    if(type == TPM_HT_TRANSIENT)
 		{
-		    OBJECT* object = HandleToObject(s_associatedHandles[sessionIndex]);
-
+		    TPM_HANDLE assoc = s_associatedHandles[sessionIndex];
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+		    /* V1.85 Phase 4.1: PQC sequence objects don't have a
+		     * publicArea.objectAttributes — they're always password
+		     * auth, not policy. AUTH_ADMIN doesn't apply, so deny. */
+		    if(assoc >= (TPM_HANDLE)0x80FF0000
+		       && assoc <= (TPM_HANDLE)0x80FF00FF)
+			return FALSE;
+#endif
+		    OBJECT* object = HandleToObject(assoc);
 		    if(!IS_ATTRIBUTE(object->publicArea.objectAttributes, TPMA_OBJECT, adminWithPolicy))
 			return FALSE;
 		}
@@ -347,6 +368,17 @@ static BOOL IsAuthValueAvailable(TPM_HANDLE    handle,        // IN: handle of e
 	  case TPM_HT_TRANSIENT:
 	    // A persistent object has already been loaded and the internal
 	    // handle changed.
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+	    /* V1.85 Phase 4.1: PQC sequence objects always provide authValue
+	     * (set at SequenceStart). Equivalent to the existing hash-sequence
+	     * branch above but without dereferencing a HASH_OBJECT pointer. */
+	    if(handle >= (TPM_HANDLE)0x80FF0000
+	       && handle <= (TPM_HANDLE)0x80FF00FF) {
+		result = TRUE;
+		break;
+	    }
+#endif
 	      {
 		  OBJECT*     object;
 		  TPMA_OBJECT attributes;
@@ -481,6 +513,15 @@ static BOOL IsAuthPolicyAvailable(TPM_HANDLE    handle,        // IN: handle of 
 		}
 	    break;
 	  case TPM_HT_TRANSIENT:
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+	    /* V1.85 Phase 4.1: PQC sequence objects never have policy
+	     * authorization (matches the existing hash-sequence rule). */
+	    if(handle >= (TPM_HANDLE)0x80FF0000
+	       && handle <= (TPM_HANDLE)0x80FF00FF) {
+		break;
+	    }
+#endif
 	      {
 		  // Object handle.
 		  // An evict object would already have been loaded and given a

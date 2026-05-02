@@ -66,6 +66,10 @@
 //** Includes
 
 #include "Tpm.h"
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+# include "PqcSequence_fp.h"   /* V1.85 Phase 4.1: PQC sequence pool lookup */
+#endif
 
 //** Functions
 //*** EntityGetLoadStatus()
@@ -288,6 +292,25 @@ EntityGetAuthValue(TPMI_DH_ENTITY handle,  // IN: handle of entity
 	      {
 		  OBJECT* object;
 
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+		  /* V1.85 Phase 4.1: ML-DSA sign/verify sequence handles live
+		   * in the vendor sub-range 0x80FF0000-0x80FF00FF and store
+		   * their auth in the parallel slot pool (PqcSequence.c).
+		   * Resolve them here so the auth-area dispatcher can validate
+		   * @sequenceHandle (USER auth role per V1.85 §17.5/§17.6). */
+		  if(handle >= (TPM_HANDLE)0x80FF0000
+		     && handle <= (TPM_HANDLE)0x80FF00FF) {
+		      PQC_SEQ_STATE *seq = PqcSequenceFromHandle(handle);
+		      if(seq != NULL) {
+			  pAuth = &seq->auth;
+			  break;
+		      }
+		      /* fall through to publicOnly assertion if seq lookup
+		       * fails — should not happen since EntityGetLoadStatus
+		       * already validated the handle is loaded. */
+		  }
+#endif
 		  object = HandleToObject(handle);
 		  // special handling if this is a sequence object
 		  if(ObjectIsSequence(object))
@@ -384,6 +407,18 @@ EntityGetAuthPolicy(TPMI_DH_ENTITY handle,     // IN: handle of entity
 		}
             break;
 	  case TPM_HT_TRANSIENT:
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+	    /* V1.85 Phase 4.1: PQC sequence objects have no authPolicy
+	     * (only authValue, set at SequenceStart per §17.5/§17.6).
+	     * Return TPM_ALG_NULL + empty policy so the dispatcher uses
+	     * password / HMAC auth only. */
+	    if(handle >= (TPM_HANDLE)0x80FF0000
+	       && handle <= (TPM_HANDLE)0x80FF00FF) {
+		hashAlg = TPM_ALG_NULL;
+		break;
+	    }
+#endif
             // authPolicy for an object
 	      {
 		  OBJECT* object = HandleToObject(handle);
@@ -421,6 +456,19 @@ TPM2B_NAME* EntityGetName(TPMI_DH_ENTITY handle,  // IN: handle of entity
     switch(HandleGetType(handle))
 	{
 	  case TPM_HT_TRANSIENT:
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+	    /* V1.85 Phase 4.1: PQC sequence objects don't have a TPMT_PUBLIC,
+	     * so they don't have a "Name" in the spec sense. Use the handle
+	     * itself as the name (same fallback the default branch uses for
+	     * permanent / PCR / session handles). */
+	    if(handle >= (TPM_HANDLE)0x80FF0000
+	       && handle <= (TPM_HANDLE)0x80FF00FF) {
+		name->t.size = sizeof(TPM_HANDLE);
+		UINT32_TO_BYTE_ARRAY(handle, name->t.name);
+		break;
+	    }
+#endif
 	      {
 		  // Name for an object
 		  OBJECT* object = HandleToObject(handle);

@@ -738,20 +738,23 @@ int main(void)
         }
         PASS("Phase 4: SignSequenceStart → seqHandle=0x%08x", signSeqHandle);
 
-        /* SignSequenceComplete: V1.85 §20.6. Phase 4 V0 uses TPM_ST_NO_SESSIONS
-         * because PQC sequence handles aren't wired into the auth-area
-         * dispatcher (Phase 4.1 will integrate via HandleToObject hook).
-         * The spec allows NO_SESSIONS when no audit/decrypt session is
-         * present (Table 124 tag clause). */
+        /* SignSequenceComplete: V1.85 §20.6 Table 124 — TWO authed handles
+         * (@sequenceHandle USER, @keyHandle USER) → TWO PW sessions. Phase 4.1
+         * has integrated PQC sequence handles via Entity.c hooks, so the
+         * spec-canonical session-based path now works end-to-end. */
         uint16_t sigSize;
         uint8_t  sig[3309 + 16];           /* ML-DSA-65 sig=3309 + slop */
         {
             uint8_t cmd[2048]; uint8_t *p = cmd;
-            p = put_u16(p, (uint16_t)TPM_ST_NO_SESSIONS);
+            p = put_u16(p, (uint16_t)TPM_ST_SESSIONS);
             p = put_u32(p, 0);
             p = put_u32(p, TPM_CC_SignSequenceComplete);
             p = put_u32(p, signSeqHandle);                  /* H1 sequenceHandle */
             p = put_u32(p, mldsaKey);                        /* H2 keyHandle */
+            /* TWO PW sessions back-to-back (auth area, 9 bytes each = 18) */
+            p = put_u32(p, 18);
+            p = put_u32(p, TPM_RS_PW); p = put_u16(p, 0); *p++ = 0; p = put_u16(p, 0);
+            p = put_u32(p, TPM_RS_PW); p = put_u16(p, 0); *p++ = 0; p = put_u16(p, 0);
             /* P1: buffer (TPM2B_MAX_BUFFER) */
             p = put_u16(p, messageLen); memcpy(p, message, messageLen); p += messageLen;
             uint32_t len = (uint32_t)(p - cmd);
@@ -760,9 +763,9 @@ int main(void)
             send_command(cmd, len, resp, &resp_len);
             uint32_t r = response_rc(resp, resp_len);
             if (r != 0) { FAIL("SignSequenceComplete rc=0x%08x", r); goto done; }
-            /* Response (TPM_ST_NO_SESSIONS): hdr(10) + sigAlg(2)
+            /* Response (TPM_ST_SESSIONS): hdr(10) + paramSize(4) + sigAlg(2)
              * + TPM2B_SIGNATURE_MLDSA{size(2), buffer[size]}. */
-            const uint8_t *q = resp + 10;
+            const uint8_t *q = resp + 14;
             uint16_t sigAlg = get_u16(q); q += 2;
             sigSize = get_u16(q); q += 2;
             if (sigAlg != (uint16_t)TPM_ALG_MLDSA || sigSize != MLDSA_65_SIG_SIZE) {
@@ -772,7 +775,7 @@ int main(void)
             }
             memcpy(sig, q, sigSize);
         }
-        PASS("Phase 4: SignSequenceComplete sig=%u B (FIPS 204 ML-DSA-65)", sigSize);
+        PASS("Phase 4.1: SignSequenceComplete (sessions) sig=%u B (FIPS 204 ML-DSA-65)", sigSize);
 
         /* VerifySequenceStart: keyHandle, auth=empty, hint.size=0, context=empty (Table 87). */
         uint32_t verifySeqHandle;
@@ -795,28 +798,40 @@ int main(void)
         }
         PASS("Phase 4: VerifySequenceStart → seqHandle=0x%08x", verifySeqHandle);
 
-        /* SequenceUpdate path: spec §17.6 says verify sequences accept Update.
-         * libtpms's TPM2_SequenceUpdate has HANDLE_1_USER, which the auth-area
-         * dispatcher resolves via HandleToObject — that fails for our PQC
-         * vendor handle range (Phase 4 V0 limitation, see CommandAttributeData.h).
-         * Phase 4.1 will hook HandleToObject/EntityGetAuthValue to recognize
-         * PQC handles and unblock the spec-canonical session-based call path.
-         *
-         * For V0 we exercise the alternative spec path: §20.6 narrative says
-         * "a message that fits into a single TPM2B_MAX_BUFFER can be signed
-         * with TPM2_SignSequenceComplete() without calling SequenceUpdate()".
-         * The same idiom applies to verify — the message can be empty buffer
-         * post-Start, with the verification happening against the empty
-         * accumulator. So we expect TPM_RC_SIGNATURE here, not success —
-         * proving the dispatch path works end-to-end against an actual
-         * verify (with the wrong message, naturally). */
+        /* SequenceUpdate(verifySeqHandle, message): per V1.85 §17.6 verify
+         * sequences accept Update (no exception for ML-DSA — TPM buffers the
+         * message, calls one-shot ML-DSA-Verify at Complete). */
+        {
+            uint8_t cmd[2048]; uint8_t *p = cmd;
+            p = put_u16(p, (uint16_t)TPM_ST_SESSIONS);
+            p = put_u32(p, 0);
+            p = put_u32(p, TPM_CC_SequenceUpdate);
+            p = put_u32(p, verifySeqHandle);
+            p = put_u32(p, 9);
+            p = put_u32(p, TPM_RS_PW); p = put_u16(p, 0); *p++ = 0; p = put_u16(p, 0);
+            p = put_u16(p, messageLen); memcpy(p, message, messageLen); p += messageLen;
+            uint32_t len = (uint32_t)(p - cmd);
+            put_u32(cmd + 2, len);
+            resp_len = sizeof(resp);
+            send_command(cmd, len, resp, &resp_len);
+            uint32_t r = response_rc(resp, resp_len);
+            if (r != 0) { FAIL("SequenceUpdate(verify) rc=0x%08x", r); goto done; }
+        }
+        PASS("Phase 4.1: SequenceUpdate(verify, %u B) — accepted per §17.6", messageLen);
+
+        /* VerifySequenceComplete: §20.3 Table 118. Handles {@sequenceHandle USER,
+         * keyHandle (no auth)} → ONE PW session for sequenceHandle.
+         * Output: TPMT_TK_VERIFIED with tag = TPM_ST_MESSAGE_VERIFIED. */
         {
             uint8_t cmd[4096]; uint8_t *p = cmd;
-            p = put_u16(p, (uint16_t)TPM_ST_NO_SESSIONS);
+            p = put_u16(p, (uint16_t)TPM_ST_SESSIONS);
             p = put_u32(p, 0);
             p = put_u32(p, TPM_CC_VerifySequenceComplete);
             p = put_u32(p, verifySeqHandle);                /* H1 sequenceHandle */
             p = put_u32(p, mldsaKey);                       /* H2 keyHandle */
+            /* ONE PW session for sequenceHandle auth */
+            p = put_u32(p, 9);
+            p = put_u32(p, TPM_RS_PW); p = put_u16(p, 0); *p++ = 0; p = put_u16(p, 0);
             /* P1: TPMT_SIGNATURE = sigAlg(2) + TPM2B_SIGNATURE_MLDSA{size(2), buf} */
             p = put_u16(p, (uint16_t)TPM_ALG_MLDSA);
             p = put_u16(p, sigSize);
@@ -826,16 +841,19 @@ int main(void)
             resp_len = sizeof(resp);
             send_command(cmd, len, resp, &resp_len);
             uint32_t r = response_rc(resp, resp_len);
-            /* Verify against empty message — signature was over 256-byte msg,
-             * so we EXPECT TPM_RC_SIGNATURE (proves the EVP path is reached
-             * and returns the canonical signature-mismatch error). Any
-             * non-zero RC counts as "dispatch reached, evaluation done". */
-            if (r == 0) {
-                FAIL("VerifySequenceComplete: expected TPM_RC_SIGNATURE on empty msg vs sig over 256 B");
+            if (r != 0) { FAIL("VerifySequenceComplete rc=0x%08x", r); goto done; }
+
+            /* Response: hdr(10) + paramSize(4) + TPMT_TK_VERIFIED{tag(2),
+             * hierarchy(4), hmac TPM2B}. Per §20.3 tag MUST be
+             * TPM_ST_MESSAGE_VERIFIED. */
+            uint16_t tag = get_u16(resp + 14);
+            if (tag != TPM_ST_MESSAGE_VERIFIED) {
+                FAIL("VerifySequenceComplete: tag=0x%04x, expected TPM_ST_MESSAGE_VERIFIED(0x%04x)",
+                     tag, TPM_ST_MESSAGE_VERIFIED);
                 goto done;
             }
         }
-        PASS("Phase 4: VerifySequenceComplete dispatch reached (sig-mismatch path) — Phase 4.1 will integrate auth-area for full §20.3 ticket emission");
+        PASS("Phase 4.1: VerifySequenceComplete → TPM_ST_MESSAGE_VERIFIED — full ML-DSA roundtrip");
     }
 
 done:

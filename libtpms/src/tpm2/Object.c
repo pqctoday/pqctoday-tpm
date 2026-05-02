@@ -176,6 +176,14 @@ OBJECT* HandleToObject(TPMI_DH_OBJECT handle  // IN: handle of the object
     // associated OBJECT.
     if(HandleGetType(handle) == TPM_HT_PERMANENT)
 	return NULL;
+    // V1.85 Phase 4.1: ML-DSA sign/verify sequence handles live in the
+    // vendor sub-range 0x80FF0000-0x80FF00FF and are NOT in the s_objects[]
+    // pool. Returning NULL keeps callers from triggering pAssert on an
+    // out-of-range index. EntityGetAuthValue / EntityGetAuthPolicy / the
+    // PQC sequence command handlers all consult the parallel pool
+    // (PqcSequence.c) via PqcSequenceFromHandle() to retrieve the real state.
+    if(handle >= (TPM_HANDLE)0x80FF0000 && handle <= (TPM_HANDLE)0x80FF00FF)
+	return NULL;
     // In this implementation, the handle is determined by the slot occupied by the
     // object.
     index = handle - TRANSIENT_FIRST;

@@ -1026,22 +1026,21 @@ const COMMAND_ATTRIBUTES    s_commandAttributes [] = {
     (COMMAND_ATTRIBUTES)(0),                               // 0x01A2 reserved
 #endif
 #if (PAD_LIST || CC_VerifySequenceComplete)
-    /* §20.3: handles @sequenceHandle (auth, USER, idx 1), keyHandle (no auth).
-     * Phase 4 V0 limitation: PQC sequence handles live in a vendor sub-range
-     * outside the regular OBJECT pool, so libtpms's auth-area dispatcher
-     * cannot HandleToObject() them. The handler validates auth manually
-     * against PQC_SEQ_STATE.auth. Phase 4.1 follow-up: integrate sequence
-     * objects into the OBJECT pool so HANDLE_1_USER can be re-enabled.
-     * Since the spec requires AUTH for the sequence handle, this is a known
-     * conformance gap and is tracked in the cross-check report. */
+    /* §20.3 Table 118: handles @sequenceHandle (auth, USER, idx 1),
+     *                          keyHandle (no auth). Phase 4.1: PQC
+     * sequence handles are now resolvable via Entity.c hooks
+     * (EntityGetAuthValue / EntityGetAuthPolicy / EntityGetName /
+     * EntityGetLoadStatus / IsAuthValueAvailable). HANDLE_1_USER restored. */
     (COMMAND_ATTRIBUTES)(CC_VerifySequenceComplete *	   // 0x01A3 §20.3
-			 (IS_IMPLEMENTED+DECRYPT_2)),
+			 (IS_IMPLEMENTED+HANDLE_1_USER+DECRYPT_2)),
 #endif
 #if (PAD_LIST || CC_SignSequenceComplete)
-    /* §20.6: handles @sequenceHandle (auth USER idx 1), @keyHandle (auth USER idx 2).
-     * Same Phase 4 V0 limitation as VerifySequenceComplete above. */
+    /* §20.6 Table 124: handles @sequenceHandle (auth USER idx 1),
+     *                          @keyHandle (auth USER idx 2). Both auth
+     * paths now flow through Phase 4.1 Entity.c hooks for the sequence
+     * handle; the keyHandle continues to use the regular OBJECT path. */
     (COMMAND_ATTRIBUTES)(CC_SignSequenceComplete *	   // 0x01A4 §20.6
-			 (IS_IMPLEMENTED+DECRYPT_2)),
+			 (IS_IMPLEMENTED+HANDLE_1_USER+HANDLE_2_USER+DECRYPT_2)),
 #endif
 #if (PAD_LIST || CC_VerifyDigestSignature)
     (COMMAND_ATTRIBUTES)(CC_VerifyDigestSignature *	   // 0x01A5

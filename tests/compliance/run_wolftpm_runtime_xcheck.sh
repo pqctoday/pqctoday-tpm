@@ -74,11 +74,14 @@ if ! grep -q "default-v1" /tmp/swtpm_setup.log 2>/dev/null; then
     fail "default-v1 profile not applied per swtpm_setup.log"
     exit 1
 fi
-if ! grep -q "0x1a5-0x1a8" /tmp/swtpm_setup.log 2>/dev/null; then
-    fail "PQC commands 0x1a5-0x1a8 not in active profile"
+# Phase 4 broadened the profile range from 0x1a5-0x1a8 to 0x1a3-0x1aa
+# (covers VerifySequenceComplete, SignSequenceComplete, VerifyDigestSignature,
+# SignDigest, Encapsulate, Decapsulate, VerifySequenceStart, SignSequenceStart).
+if ! grep -qE "0x1a3-0x1aa|0x1a5-0x1a8" /tmp/swtpm_setup.log 2>/dev/null; then
+    fail "PQC commands not in active profile (expected 0x1a3-0x1aa range)"
     exit 1
 fi
-pass "active profile includes V1.85 PQC commands 0x1a5-0x1a8"
+pass "active profile includes V1.85 PQC commands (Phase 4 range 0x1a3-0x1aa)"
 
 # ── Step 3: start swtpm on TCP 2321/2322 ────────────────────────────────────
 section "Start swtpm socket"
@@ -136,27 +139,41 @@ for kem in 512 768 1024; do
         || fail  "ML-KEM-$kem round-trip mismatch:\n$(echo "$out" | sed 's/^/         /')"
 done
 
-# ── Step 5: ML-DSA CreatePrimary (sign path is Phase 4) ─────────────────────
+# ── Step 5: ML-DSA full sign/verify roundtrip (Phase 4 — V1.85 §17.5/§20.6) ─
 #
-# The full sign/verify path needs TPM2_SignSequence{Start,Complete} —
-# Phase 4 work. Here we assert CreatePrimary succeeds with FIPS 204 pubkey
-# sizes, then accept the SignSequenceStart 0x143 as the documented Phase-4
-# stub boundary. Once Phase 4 lands, this section graduates from "expected
-# stub" to "full sign/verify roundtrip".
-section "ML-DSA CreatePrimary + Phase-4 boundary (Part 3 §14.x)"
+# Phase 4 V0 (commit cea10317) implemented the four ML-DSA sequence
+# commands. Phase 4.1 wired PQC sequence handles into the auth-area
+# dispatcher (HandleToObject / EntityGetAuthValue / EntityGetAuthPolicy /
+# EntityGetName + IsDAExempted + IsAuthValueAvailable / IsAuthPolicyAvailable
+# in SessionProcess.c). End-to-end Sign + Verify roundtrip now succeeds
+# for ML-DSA-{44,65,87} producing TPMT_TK_VERIFIED with tag =
+# TPM_ST_MESSAGE_VERIFIED per V1.85 §20.3 Table 119.
+section "ML-DSA full sign+verify roundtrip (Part 3 §17.5/§20.6/§20.3)"
 
 declare -A MLDSA_PK=( [44]=1312 [65]=1952 [87]=2592 )
+declare -A MLDSA_SIG=( [44]=2420 [65]=3309 [87]=4627 )
 
 for dsa in 44 65 87; do
     out=$( "$WOLFTPM_DIR/examples/pqc/mldsa_sign" -mldsa=$dsa 2>&1 )
     pk_actual=$( echo "$out" | grep -oE "pubkey [0-9]+ bytes" | grep -oE "[0-9]+" || echo 0 )
+    sig_actual=$( echo "$out" | grep -oE "signature [0-9]+ bytes" | grep -oE "[0-9]+" || echo 0 )
     pk_expect=${MLDSA_PK[$dsa]}
+    sig_expect=${MLDSA_SIG[$dsa]}
 
     [[ "$pk_actual" == "$pk_expect" ]] \
         && pass  "ML-DSA-$dsa CreatePrimary pubkey = $pk_actual B (FIPS 204)" \
         || fail  "ML-DSA-$dsa pubkey: got $pk_actual, expected $pk_expect"
 
-    if echo "$out" | grep -q "SignSequenceStart failed 0x143"; then
+    [[ "$sig_actual" == "$sig_expect" ]] \
+        && pass  "ML-DSA-$dsa SignSequenceComplete sig = $sig_actual B (FIPS 204)" \
+        || fail  "ML-DSA-$dsa signature: got $sig_actual, expected $sig_expect"
+
+    if echo "$out" | grep -qE "TPM_ST_MESSAGE_VERIFIED ticket returned"; then
+        pass "ML-DSA-$dsa VerifySequenceComplete → TPM_ST_MESSAGE_VERIFIED (§20.3 Table 119)"
+    fi
+    if echo "$out" | grep -qE "Round-trip OK"; then
+        pass "ML-DSA-$dsa Pure ML-DSA sign + verify sequence — full V1.85 Phase 4 roundtrip"
+    elif echo "$out" | grep -q "SignSequenceStart failed 0x143"; then
         pass "ML-DSA-$dsa SignSequence path returns TPM_RC_COMMAND_CODE — expected Phase-4 stub"
     elif echo "$out" | grep -qE "Sign(Sequence)? .* OK|verified"; then
         pass "ML-DSA-$dsa Sign/Verify roundtrip OK — Phase 4 has landed!"

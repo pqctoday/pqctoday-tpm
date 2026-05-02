@@ -339,3 +339,60 @@ Outstanding cross-implementation work, deferred to Phase 4:
 
 1. `TPM2_SignSequenceStart/Complete` and `TPM2_VerifySequenceStart/Complete` runtime handlers (ALG_MLDSA/HASH_MLDSA streaming sign path).
 2. Investigate wolfTPM `TPM2_Encapsulate` response parsing — either patch libtpms response shape, or file upstream wolfTPM bug.
+
+---
+
+## Phase 3.5+1 Resolution Snapshot (2026-05-02 — same-day)
+
+After commits `23a718f6` (Encapsulate Table 61), `2403f4ca` (algorithm registry), and `dfcefdea` (TPMA_ML_PARAMETER_SET + allowExternalMu).
+
+### "Phase 2 Prerequisite Fixes" punch list — all 10 items now resolved
+
+| # | Item | Status |
+|---|---|---|
+| 1 | Spec-canonical `TPM2B_SIGNATURE_MLDSA` (not wolfTPM's reversed name) | ✅ TpmTypes.h:2166 |
+| 2 | `TPMS_SIGNATURE_HASH_MLDSA` struct | ✅ TpmTypes.h:2171 |
+| 3 | `TPMU_SIGNATURE.mldsa` + `.hash_mldsa` | ✅ TpmTypes.h:2197, 2200 |
+| 4 | `TPM2B_SHARED_SECRET` | ✅ TpmTypes.h:2299 |
+| 5 | `TPM2B_SIGNATURE_HINT` (size 256) | ✅ TpmTypes.h:2274 |
+| 6 | `TPMU_SIGNATURE_CTX` + `TPM2B_SIGNATURE_CTX` | ✅ TpmTypes.h:2259, 2266 |
+| 7 | `TPMU_KEM_CIPHERTEXT` + `TPM2B_KEM_CIPHERTEXT` | ✅ TpmTypes.h:2303, 2310 |
+| 8 | Command codes match Table 11 | ✅ verified by `check_cc` runs in `v185_compliance.sh` |
+| 9 | `MAX_MLKEM_CT_SIZE = 1568` (spec-exact) | ✅ kept |
+| 10 | `MLKEM_SHARED_SECRET_SIZE = 32` | ✅ kept |
+
+### Spec-conformance gaps closed in Phase 3.5+1
+
+| Spec ref | Gap | Resolution commit |
+|---|---|---|
+| §12.2.3.6 Table 229 | `TPMS_MLDSA_PARMS.allowExternalMu` field | `ea52cf9d` (wire format) + `dfcefdea` (enforcement) |
+| §12.2.3.8 Table 231 | `TPMS_MLKEM_PARMS.symmetric` field, spec-canonical order | `ea52cf9d` |
+| §14.10 Table 61 | `TPM2_Encapsulate` response = `{ sharedSecret, ciphertext }` | `23a718f6` |
+| §8.6 Table 22 / §8.7 Table 46 | `TPM_PT_ML_PARAMETER_SETS` GetCapability | `dfcefdea` |
+| `s_AlgorithmProperties` ML-KEM/ML-DSA/HashML-DSA registry | not registered → JSON profile naming impossible | `2403f4ca` |
+
+### Cross-implementation runtime cross-check — current state
+
+Compliance scores after Phase 3.5+1:
+- pqctoday-tpm: **96 passed, 0 failed, 0 skipped** (up from 92, four new spec-conformance checks)
+- wolfTPM v4.0.0 PR #445 (source-level): 37 passed, 0 failed, 7 skipped (unchanged)
+
+End-to-end cross-impl over swtpm socket:
+- wolfTPM `mlkem_encap -mlkem={512,768,1024}` → **Round-trip OK** for all three (Encap+Decap with FIPS 203 sizes) after the §14.10 Table 61 fix.
+- wolfTPM `mldsa_sign -mldsa={44,65,87}` → CreatePrimary OK with FIPS 204 pubkey sizes; client then exits at `SignSequenceStart 0x143 = TPM_RC_COMMAND_CODE` because Phase 4 sequence handlers are stubs.
+
+### Outstanding cross-impl work (Phase 4)
+
+1. **`TPM2_SignSequenceStart/Complete` and `TPM2_VerifySequenceStart/Complete`** — stubs returning TPM_RC_COMMAND_CODE. Needed to complete wolfTPM's `mldsa_sign` example end-to-end.
+2. **TCG IWG PQC EK Credential Profile** — once published, replace the temporary self-signed PQC EK certs (Phase 3 Step 5) with proper trust-anchored chain.
+3. **`TPM2_Quote` / `TPM2_Certify` with ML-DSA AK** — straightforward once SignSequence is implemented; gated by attestation work.
+
+### Reproduction (one Docker container, idempotent)
+
+```
+docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev bash -c '
+  cd libtpms && make install && ldconfig && cd ..
+  make compliance | tail -5
+  bash tests/compliance/v185_wolftpm_compliance.sh | tail -5
+'
+```

@@ -12,7 +12,7 @@ Fork of [libtpms v0.10.2](https://github.com/stefanberger/libtpms) + [swtpm v0.1
 | --- | --- | --- |
 | **1 — Foundation** | Algorithm IDs, crypto primitives (ML-DSA + ML-KEM), marshal/unmarshal, NIST ACVP KATs | ✅ Complete |
 | **2 — V1.85 Commands** | `TPM2_Encapsulate`, `TPM2_Decapsulate`, `TPM2_SignDigest`, `TPM2_VerifyDigestSignature` — live; sequence commands wired, pending Phase 4 | ✅ In progress (4/8 live) |
-| 3 — Key Hierarchy | PQC EK/AK, hybrid EK certificates | 🔲 Not started |
+| **3 — Key Hierarchy** | ML-KEM EK + ML-DSA AK provisioning, `MakeCredential`/`ActivateCredential` via ML-KEM, `CryptSelectSignScheme` for ML-DSA | ✅ Complete (X.509 EK certs deferred to Phase 3.1) |
 | 4 — Attestation | `TPM2_Quote`, `TPM2_Certify`, PCR banks | 🔲 Not started |
 | 5 — WASM | Emscripten build, browser API, PQC Today integration | 🔲 Not started |
 
@@ -23,8 +23,10 @@ Fork of [libtpms v0.10.2](https://github.com/stefanberger/libtpms) + [swtpm v0.1
 - `TPM2_Decapsulate` — decapsulate with a loaded ML-KEM private key, returns shared secret
 - `TPM2_SignDigest` — sign a pre-computed digest with a loaded ML-DSA or HashML-DSA key
 - `TPM2_VerifyDigestSignature` — verify an ML-DSA / HashML-DSA signature over a pre-computed digest, returns `TPM_ST_DIGEST_VERIFIED` ticket
+- `MakeCredential` / `ActivateCredential` transport via ML-KEM-768 (`CryptSecretEncrypt`/`Decrypt` ML-KEM path)
+- ML-KEM-768 EK and ML-DSA-65 AK auto-provisioned by `swtpm_setup` at Docker startup (persistent handles `0x810100A0`/`0x810100A1`)
 - All classical TPM operations (RSA, ECC, symmetric) work unchanged via the swtpm socket
-- 83-check TCG V1.85 compliance suite passes end-to-end
+- 85-check TCG V1.85 compliance suite passes end-to-end
 
 **Streaming sequence commands** (`TPM2_SignSequenceStart/Complete`, `TPM2_VerifySequenceStart/Complete`) are dispatch-wired and return `TPM_RC_COMMAND_CODE` until Phase 4, which requires a new `MLDSA_SEQUENCE_OBJECT` type for holding live `EVP_MD_CTX*` state across command boundaries.
 
@@ -230,7 +232,7 @@ make compliance
 | --- | --- | --- |
 | `make crossval` | OpenSSL EVP round-trips (ML-DSA-{44,65,87}, ML-KEM-{512,768,1024}), 75 NIST ACVP ML-DSA keyGen KATs, `TPM2_CreatePrimary(MLDSA-65)` end-to-end | 17/17 pass |
 | `make crossval-softhsm` | All of above + softhsmv3 C++ cross-verify (sign↔verify, encap↔decap) | 17/17 pass |
-| `make compliance` | 83-check TCG V1.85 compliance suite | 83 PASS / 0 FAIL |
+| `make compliance` | 85-check TCG V1.85 compliance suite | 85 PASS / 0 FAIL |
 | `libtpms make check` | Upstream libtpms unit tests | 10/10 pass |
 
 > **macOS note:** The cross-val binaries are Linux ELF and run inside Docker. The compliance

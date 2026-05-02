@@ -57,5 +57,29 @@ LIB_EXPORT TPM_RC CryptMlDsaValidateSignature(
     const TPM2B_SIGNATURE_CTX *ctx     // IN: FIPS 204 context string (NULL = empty)
 );
 
+/* Phase 4 — sign/verify of arbitrary-length messages (V1.85 §17.5/§20.6).
+ * These mirror the digest-shaped helpers above but operate on raw byte
+ * buffers up to MAX_PQC_SEQ_BUFFER. The TPM2B_DIGEST helpers cap at
+ * MAX_DIGEST_SIZE (64 B) which is too small for the SignSequenceComplete
+ * buffer parameter (TPM2B_MAX_BUFFER ≈ 1024 B) and verify-sequence
+ * accumulated message (up to 4 KB in our V0). Internally these call
+ * EVP_DigestSign / EVP_DigestVerify with the message bytes; ML-DSA in
+ * OpenSSL 3.5+ computes µ internally per FIPS 204 §5.2. */
+LIB_EXPORT TPM_RC CryptMlDsaSignMessage(
+    TPMT_SIGNATURE*             sigOut,
+    OBJECT*                     key,
+    const BYTE*                 msg,
+    UINT32                      msgLen,
+    const TPM2B_SIGNATURE_CTX*  ctx
+);
+
+LIB_EXPORT TPM_RC CryptMlDsaValidateSignatureMessage(
+    TPMT_SIGNATURE*             sig,
+    OBJECT*                     key,
+    const BYTE*                 msg,
+    UINT32                      msgLen,
+    const TPM2B_SIGNATURE_CTX*  ctx
+);
+
 #endif  // ALG_MLDSA || ALG_HASH_MLDSA
 #endif  // _CRYPT_ML_DSA_FP_H_

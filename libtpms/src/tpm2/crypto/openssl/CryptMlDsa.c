@@ -465,4 +465,208 @@ CryptMlDsaValidateSignature(TPMT_SIGNATURE            *sig,
     return result;
 }
 
+/* ------------------------------------------------------------------------ */
+/* Phase 4 — sign / verify of arbitrary-length messages                       */
+/* ------------------------------------------------------------------------ */
+/* These mirror the digest-shaped helpers above, but accept a raw byte buffer
+ * up to UINT32 size. Used by TPM2_SignSequenceComplete and
+ * TPM2_VerifySequenceComplete (V1.85 §17.5/§20.6) where the input is the
+ * accumulated message rather than a pre-hashed digest. ML-DSA in OpenSSL
+ * 3.5+ (NULL md, internal Mu mode) hashes the message internally per
+ * FIPS 204 §5.2 — same code path as digest-shaped helpers, just a different
+ * input length cap. */
+
+LIB_EXPORT TPM_RC
+CryptMlDsaSignMessage(TPMT_SIGNATURE            *sigOut,
+                      OBJECT                    *key,
+                      const BYTE                *msg,
+                      UINT32                    msgLen,
+                      const TPM2B_SIGNATURE_CTX *ctx)
+{
+    TPM_RC                    result     = TPM_RC_FAILURE;
+    TPMT_PUBLIC              *pub        = &key->publicArea;
+    TPMI_MLDSA_PARAMETER_SET  paramSet   = GetParamSet(pub);
+    const char               *algName    = CryptMlDsaAlgName(paramSet);
+    EVP_PKEY                 *pkey       = NULL;
+    EVP_MD_CTX               *mdctx      = NULL;
+    EVP_PKEY_CTX             *pctx       = NULL;
+    OSSL_PARAM                initParams[3];
+    OSSL_PARAM                ctxParams[2];
+    size_t                    sigLen     = 0;
+    BYTE                     *sigBuf     = NULL;
+    UINT16                    expectedSigSize;
+
+    if (algName == NULL)
+        return TPM_RC_SCHEME;
+    expectedSigSize = CryptMlDsaSigSize(paramSet);
+    if (expectedSigSize == 0)
+        return TPM_RC_SCHEME;
+
+    pkey = PkeyFromSeed(algName,
+                        key->sensitive.sensitive.mldsa.t.buffer,
+                        key->sensitive.sensitive.mldsa.t.size);
+    if (pkey == NULL)
+        return TPM_RC_KEY;
+
+    mdctx = EVP_MD_CTX_new();
+    if (mdctx == NULL) goto cleanup;
+
+    {
+        int i = 0;
+#if ALG_HASH_MLDSA
+        if (pub->type == TPM_ALG_HASH_MLDSA) {
+            const char *inst = HashMlDsaInstance(paramSet, pub->nameAlg);
+            if (inst == NULL) { result = TPM_RC_SCHEME; goto cleanup; }
+            initParams[i++] = OSSL_PARAM_construct_utf8_string(
+                                  OSSL_SIGNATURE_PARAM_INSTANCE, (char *)inst, 0);
+        }
+#endif
+        initParams[i] = OSSL_PARAM_construct_end();
+    }
+
+    if (EVP_DigestSignInit_ex(mdctx, &pctx, NULL, NULL, NULL, pkey,
+                              (pub->type == TPM_ALG_HASH_MLDSA) ? initParams : NULL) <= 0)
+        goto cleanup;
+
+    if (ctx != NULL && ctx->t.size > 0) {
+        ctxParams[0] = OSSL_PARAM_construct_octet_string(
+                           OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+                           (void *)ctx->t.context, ctx->t.size);
+        ctxParams[1] = OSSL_PARAM_construct_end();
+        if (EVP_PKEY_CTX_set_params(pctx, ctxParams) <= 0)
+            goto cleanup;
+    }
+
+    if (EVP_DigestSign(mdctx, NULL, &sigLen, msg, msgLen) <= 0)
+        goto cleanup;
+    if (sigLen != (size_t)expectedSigSize)
+        goto cleanup;
+
+#if ALG_MLDSA
+    if (pub->type == TPM_ALG_MLDSA) {
+        sigOut->sigAlg = TPM_ALG_MLDSA;
+        sigBuf = sigOut->signature.mldsa.t.buffer;
+    }
+#endif
+#if ALG_HASH_MLDSA
+    if (pub->type == TPM_ALG_HASH_MLDSA) {
+        sigOut->sigAlg = TPM_ALG_HASH_MLDSA;
+        sigBuf = sigOut->signature.hash_mldsa.signature.t.buffer;
+    }
+#endif
+
+    if (EVP_DigestSign(mdctx, sigBuf, &sigLen, msg, msgLen) <= 0)
+        goto cleanup;
+
+#if ALG_MLDSA
+    if (sigOut->sigAlg == TPM_ALG_MLDSA)
+        sigOut->signature.mldsa.t.size = (UINT16)sigLen;
+#endif
+#if ALG_HASH_MLDSA
+    if (sigOut->sigAlg == TPM_ALG_HASH_MLDSA)
+        sigOut->signature.hash_mldsa.signature.t.size = (UINT16)sigLen;
+#endif
+
+    result = TPM_RC_SUCCESS;
+
+ cleanup:
+    EVP_MD_CTX_free(mdctx);
+    EVP_PKEY_free(pkey);
+    return result;
+}
+
+LIB_EXPORT TPM_RC
+CryptMlDsaValidateSignatureMessage(TPMT_SIGNATURE            *sig,
+                                   OBJECT                    *key,
+                                   const BYTE                *msg,
+                                   UINT32                    msgLen,
+                                   const TPM2B_SIGNATURE_CTX *ctx)
+{
+    TPM_RC                    result     = TPM_RC_SIGNATURE;
+    TPMT_PUBLIC              *pub        = &key->publicArea;
+    TPMI_MLDSA_PARAMETER_SET  paramSet   = GetParamSet(pub);
+    const char               *algName    = CryptMlDsaAlgName(paramSet);
+    EVP_PKEY                 *pkey       = NULL;
+    EVP_MD_CTX               *mdctx      = NULL;
+    EVP_PKEY_CTX             *pctx       = NULL;
+    OSSL_PARAM                initParams[3];
+    OSSL_PARAM                ctxParams[2];
+    UINT16                    expectedSigSize;
+    const BYTE               *sigBuf;
+    size_t                    sigLen;
+
+    if (algName == NULL)
+        return TPM_RC_SCHEME;
+    expectedSigSize = CryptMlDsaSigSize(paramSet);
+    if (expectedSigSize == 0)
+        return TPM_RC_SCHEME;
+
+#if ALG_MLDSA
+    if (sig->sigAlg == TPM_ALG_MLDSA) {
+        sigBuf = sig->signature.mldsa.t.buffer;
+        sigLen = sig->signature.mldsa.t.size;
+    } else
+#endif
+#if ALG_HASH_MLDSA
+    if (sig->sigAlg == TPM_ALG_HASH_MLDSA) {
+        sigBuf = sig->signature.hash_mldsa.signature.t.buffer;
+        sigLen = sig->signature.hash_mldsa.signature.t.size;
+    } else
+#endif
+    {
+        return TPM_RC_SCHEME;
+    }
+    if (sigLen != (size_t)expectedSigSize)
+        return TPM_RC_SIGNATURE;
+
+    pkey = PkeyFromPub(algName,
+                       pub->unique.mldsa.t.buffer,
+                       pub->unique.mldsa.t.size);
+    if (pkey == NULL)
+        return TPM_RC_KEY;
+
+    mdctx = EVP_MD_CTX_new();
+    if (mdctx == NULL) goto cleanup;
+
+    {
+        int i = 0;
+#if ALG_HASH_MLDSA
+        if (pub->type == TPM_ALG_HASH_MLDSA) {
+            const char *inst = HashMlDsaInstance(paramSet, pub->nameAlg);
+            if (inst == NULL) { result = TPM_RC_SCHEME; goto cleanup; }
+            initParams[i++] = OSSL_PARAM_construct_utf8_string(
+                                  OSSL_SIGNATURE_PARAM_INSTANCE, (char *)inst, 0);
+        }
+#endif
+        initParams[i] = OSSL_PARAM_construct_end();
+    }
+
+    if (EVP_DigestVerifyInit_ex(mdctx, &pctx, NULL, NULL, NULL, pkey,
+                                (pub->type == TPM_ALG_HASH_MLDSA) ? initParams : NULL) <= 0) {
+        result = TPM_RC_FAILURE;
+        goto cleanup;
+    }
+
+    if (ctx != NULL && ctx->t.size > 0) {
+        ctxParams[0] = OSSL_PARAM_construct_octet_string(
+                           OSSL_SIGNATURE_PARAM_CONTEXT_STRING,
+                           (void *)ctx->t.context, ctx->t.size);
+        ctxParams[1] = OSSL_PARAM_construct_end();
+        if (EVP_PKEY_CTX_set_params(pctx, ctxParams) <= 0) {
+            result = TPM_RC_FAILURE;
+            goto cleanup;
+        }
+    }
+
+    if (EVP_DigestVerify(mdctx, sigBuf, sigLen, msg, msgLen) == 1)
+        result = TPM_RC_SUCCESS;
+    else
+        result = TPM_RC_SIGNATURE;
+
+ cleanup:
+    EVP_MD_CTX_free(mdctx);
+    EVP_PKEY_free(pkey);
+    return result;
+}
+
 #endif  // ALG_MLDSA || ALG_HASH_MLDSA

@@ -4400,7 +4400,8 @@ ACT_SetTimeout_COMMAND_DESCRIPTOR_t _ACT_SetTimeoutData = {
 
 /* ── V1.85 PQC command descriptors (§29) ────────────────────────────────── */
 
-/* TPM2_VerifySequenceComplete 0x1A3 — Phase 4 stub */
+/* TPM2_VerifySequenceComplete 0x1A3 — V1.85 RC4 Part 3 §20.3 Tables 118-119.
+ * Handles: @sequenceHandle, keyHandle. Param: signature. Output: validation. */
 #if CC_VerifySequenceComplete
 #include "VerifySequenceComplete_fp.h"
 typedef TPM_RC (VerifySequenceComplete_Entry)(
@@ -4411,17 +4412,19 @@ typedef const struct {
     UINT16  inSize;
     UINT16  outSize;
     UINT16  offsetOfTypes;
-    UINT16  paramOffsets[1];
-    BYTE    types[5];
+    UINT16  paramOffsets[2];
+    BYTE    types[6];
 } VerifySequenceComplete_COMMAND_DESCRIPTOR_t;
 VerifySequenceComplete_COMMAND_DESCRIPTOR_t _VerifySequenceCompleteData = {
     /* entry         */ &TPM2_VerifySequenceComplete,
     /* inSize        */ (UINT16)(sizeof(VerifySequenceComplete_In)),
     /* outSize       */ (UINT16)(sizeof(VerifySequenceComplete_Out)),
     /* offsetOfTypes */ offsetof(VerifySequenceComplete_COMMAND_DESCRIPTOR_t, types),
-    /* offsets       */ {(UINT16)(offsetof(VerifySequenceComplete_In, buffer))},
+    /* offsets       */ {(UINT16)(offsetof(VerifySequenceComplete_In, keyHandle)),
+                         (UINT16)(offsetof(VerifySequenceComplete_In, signature))},
     /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
-                         TPM2B_MAX_BUFFER_P_UNMARSHAL,
+                         TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPMT_SIGNATURE_P_UNMARSHAL,
                          END_OF_LIST,
                          TPMT_TK_VERIFIED_P_MARSHAL,
                          END_OF_LIST}
@@ -4431,7 +4434,8 @@ VerifySequenceComplete_COMMAND_DESCRIPTOR_t _VerifySequenceCompleteData = {
 #define _VerifySequenceCompleteDataAddress 0
 #endif /* CC_VerifySequenceComplete */
 
-/* TPM2_SignSequenceComplete 0x1A4 — Phase 4 stub */
+/* TPM2_SignSequenceComplete 0x1A4 — V1.85 RC4 Part 3 §20.6 Tables 124-125.
+ * Handles: @sequenceHandle, @keyHandle. Param: buffer. Output: signature. */
 #if CC_SignSequenceComplete
 #include "SignSequenceComplete_fp.h"
 typedef TPM_RC (SignSequenceComplete_Entry)(
@@ -4442,16 +4446,18 @@ typedef const struct {
     UINT16  inSize;
     UINT16  outSize;
     UINT16  offsetOfTypes;
-    UINT16  paramOffsets[1];
-    BYTE    types[5];
+    UINT16  paramOffsets[2];
+    BYTE    types[6];
 } SignSequenceComplete_COMMAND_DESCRIPTOR_t;
 SignSequenceComplete_COMMAND_DESCRIPTOR_t _SignSequenceCompleteData = {
     /* entry         */ &TPM2_SignSequenceComplete,
     /* inSize        */ (UINT16)(sizeof(SignSequenceComplete_In)),
     /* outSize       */ (UINT16)(sizeof(SignSequenceComplete_Out)),
     /* offsetOfTypes */ offsetof(SignSequenceComplete_COMMAND_DESCRIPTOR_t, types),
-    /* offsets       */ {(UINT16)(offsetof(SignSequenceComplete_In, buffer))},
+    /* offsets       */ {(UINT16)(offsetof(SignSequenceComplete_In, keyHandle)),
+                         (UINT16)(offsetof(SignSequenceComplete_In, buffer))},
     /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPMI_DH_OBJECT_H_UNMARSHAL,
                          TPM2B_MAX_BUFFER_P_UNMARSHAL,
                          END_OF_LIST,
                          TPMT_SIGNATURE_P_MARSHAL,
@@ -4597,7 +4603,8 @@ Decapsulate_COMMAND_DESCRIPTOR_t _DecapsulateData = {
 #define _DecapsulateDataAddress 0
 #endif /* CC_Decapsulate */
 
-/* TPM2_VerifySequenceStart 0x1A9 — Phase 4 stub */
+/* TPM2_VerifySequenceStart 0x1A9 — V1.85 RC4 Part 3 §17.6 Tables 87-88.
+ * Handle: keyHandle. Params: auth, hint, context. Output: sequenceHandle. */
 #if CC_VerifySequenceStart
 #include "VerifySequenceStart_fp.h"
 typedef TPM_RC (VerifySequenceStart_Entry)(
@@ -4616,12 +4623,12 @@ VerifySequenceStart_COMMAND_DESCRIPTOR_t _VerifySequenceStartData = {
     /* inSize        */ (UINT16)(sizeof(VerifySequenceStart_In)),
     /* outSize       */ (UINT16)(sizeof(VerifySequenceStart_Out)),
     /* offsetOfTypes */ offsetof(VerifySequenceStart_COMMAND_DESCRIPTOR_t, types),
-    /* offsets       */ {(UINT16)(offsetof(VerifySequenceStart_In, inScheme)),
-                         (UINT16)(offsetof(VerifySequenceStart_In, signature)),
+    /* offsets       */ {(UINT16)(offsetof(VerifySequenceStart_In, auth)),
+                         (UINT16)(offsetof(VerifySequenceStart_In, hint)),
                          (UINT16)(offsetof(VerifySequenceStart_In, context))},
     /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
-                         TPMT_SIG_SCHEME_P_UNMARSHAL + ADD_FLAG,
-                         TPMT_SIGNATURE_P_UNMARSHAL,
+                         TPM2B_AUTH_P_UNMARSHAL,
+                         TPM2B_SIGNATURE_HINT_P_UNMARSHAL,
                          TPM2B_SIGNATURE_CTX_P_UNMARSHAL,
                          END_OF_LIST,
                          TPMI_DH_OBJECT_H_MARSHAL,
@@ -4632,7 +4639,8 @@ VerifySequenceStart_COMMAND_DESCRIPTOR_t _VerifySequenceStartData = {
 #define _VerifySequenceStartDataAddress 0
 #endif /* CC_VerifySequenceStart */
 
-/* TPM2_SignSequenceStart 0x1AA — Phase 4 stub */
+/* TPM2_SignSequenceStart 0x1AA — V1.85 RC4 Part 3 §17.5 Tables 89-90.
+ * Handle: keyHandle. Params: auth, context. Output: sequenceHandle. */
 #if CC_SignSequenceStart
 #include "SignSequenceStart_fp.h"
 typedef TPM_RC (SignSequenceStart_Entry)(
@@ -4643,21 +4651,19 @@ typedef const struct {
     UINT16  inSize;
     UINT16  outSize;
     UINT16  offsetOfTypes;
-    UINT16  paramOffsets[3];
-    BYTE    types[7];
+    UINT16  paramOffsets[2];
+    BYTE    types[6];
 } SignSequenceStart_COMMAND_DESCRIPTOR_t;
 SignSequenceStart_COMMAND_DESCRIPTOR_t _SignSequenceStartData = {
     /* entry         */ &TPM2_SignSequenceStart,
     /* inSize        */ (UINT16)(sizeof(SignSequenceStart_In)),
     /* outSize       */ (UINT16)(sizeof(SignSequenceStart_Out)),
     /* offsetOfTypes */ offsetof(SignSequenceStart_COMMAND_DESCRIPTOR_t, types),
-    /* offsets       */ {(UINT16)(offsetof(SignSequenceStart_In, inScheme)),
-                         (UINT16)(offsetof(SignSequenceStart_In, context)),
-                         (UINT16)(offsetof(SignSequenceStart_In, hint))},
+    /* offsets       */ {(UINT16)(offsetof(SignSequenceStart_In, auth)),
+                         (UINT16)(offsetof(SignSequenceStart_In, context))},
     /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
-                         TPMT_SIG_SCHEME_P_UNMARSHAL + ADD_FLAG,
+                         TPM2B_AUTH_P_UNMARSHAL,
                          TPM2B_SIGNATURE_CTX_P_UNMARSHAL,
-                         TPM2B_SIGNATURE_HINT_P_UNMARSHAL,
                          END_OF_LIST,
                          TPMI_DH_OBJECT_H_MARSHAL,
                          END_OF_LIST}

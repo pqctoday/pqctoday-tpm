@@ -128,6 +128,17 @@ EntityGetLoadStatus(COMMAND* command  // IN/OUT: command parsing structure
 			}
 		    break;
 		  case TPM_HT_TRANSIENT:
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+		    /* V1.85 Phase 4: ML-DSA sign/verify sequence handles live in
+		     * a vendor sub-range (0x80FF0000–0x80FF00FF) outside the regular
+		     * OBJECT pool. Bypass IsObjectPresent for those — PqcSequenceFromHandle
+		     * does the real load-status check inside the command handler. */
+		    if(handle >= (TPM_HANDLE)0x80FF0000
+		       && handle <= (TPM_HANDLE)0x80FF00FF) {
+			break;
+		    }
+#endif
 		    // For a transient object, check if the handle is associated
 		    // with a loaded object.
 		    if(!IsObjectPresent(handle))

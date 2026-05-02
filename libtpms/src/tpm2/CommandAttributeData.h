@@ -1026,12 +1026,22 @@ const COMMAND_ATTRIBUTES    s_commandAttributes [] = {
     (COMMAND_ATTRIBUTES)(0),                               // 0x01A2 reserved
 #endif
 #if (PAD_LIST || CC_VerifySequenceComplete)
-    (COMMAND_ATTRIBUTES)(CC_VerifySequenceComplete *	   // 0x01A3 Phase 4
-			 (IS_IMPLEMENTED+HANDLE_1_USER+DECRYPT_2)),
+    /* §20.3: handles @sequenceHandle (auth, USER, idx 1), keyHandle (no auth).
+     * Phase 4 V0 limitation: PQC sequence handles live in a vendor sub-range
+     * outside the regular OBJECT pool, so libtpms's auth-area dispatcher
+     * cannot HandleToObject() them. The handler validates auth manually
+     * against PQC_SEQ_STATE.auth. Phase 4.1 follow-up: integrate sequence
+     * objects into the OBJECT pool so HANDLE_1_USER can be re-enabled.
+     * Since the spec requires AUTH for the sequence handle, this is a known
+     * conformance gap and is tracked in the cross-check report. */
+    (COMMAND_ATTRIBUTES)(CC_VerifySequenceComplete *	   // 0x01A3 §20.3
+			 (IS_IMPLEMENTED+DECRYPT_2)),
 #endif
 #if (PAD_LIST || CC_SignSequenceComplete)
-    (COMMAND_ATTRIBUTES)(CC_SignSequenceComplete *	   // 0x01A4 Phase 4
-			 (IS_IMPLEMENTED+DECRYPT_2+HANDLE_1_USER)),
+    /* §20.6: handles @sequenceHandle (auth USER idx 1), @keyHandle (auth USER idx 2).
+     * Same Phase 4 V0 limitation as VerifySequenceComplete above. */
+    (COMMAND_ATTRIBUTES)(CC_SignSequenceComplete *	   // 0x01A4 §20.6
+			 (IS_IMPLEMENTED+DECRYPT_2)),
 #endif
 #if (PAD_LIST || CC_VerifyDigestSignature)
     (COMMAND_ATTRIBUTES)(CC_VerifyDigestSignature *	   // 0x01A5
@@ -1050,12 +1060,16 @@ const COMMAND_ATTRIBUTES    s_commandAttributes [] = {
 			 (IS_IMPLEMENTED+DECRYPT_2+HANDLE_1_USER+ENCRYPT_2)),
 #endif
 #if (PAD_LIST || CC_VerifySequenceStart)
-    (COMMAND_ATTRIBUTES)(CC_VerifySequenceStart *	   // 0x01A9 Phase 4
-			 (IS_IMPLEMENTED+HANDLE_1_USER)),
+    (COMMAND_ATTRIBUTES)(CC_VerifySequenceStart *	   // 0x01A9 §17.6
+			 /* One handle: keyHandle (no auth, Auth Index: None per
+			  * Table 87 — auth is checked at VerifySequenceComplete). */
+			 (IS_IMPLEMENTED)),
 #endif
 #if (PAD_LIST || CC_SignSequenceStart)
-    (COMMAND_ATTRIBUTES)(CC_SignSequenceStart *		   // 0x01AA Phase 4
-			 (IS_IMPLEMENTED+HANDLE_1_USER)),
+    (COMMAND_ATTRIBUTES)(CC_SignSequenceStart *		   // 0x01AA §17.5
+			 /* One handle: keyHandle (no auth, Auth Index: None per
+			  * Table 89 — auth is checked at SignSequenceComplete). */
+			 (IS_IMPLEMENTED)),
 #endif
 #if (PAD_LIST  || CC_Vendor_TCG_Test)
     (COMMAND_ATTRIBUTES)(CC_Vendor_TCG_Test          *  // 0x0000

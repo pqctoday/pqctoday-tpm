@@ -54,7 +54,11 @@ struct RuntimeProfile g_RuntimeProfile;
 const char defaultCommandsProfile[] =
     "0x11f-0x122,0x124-0x12e,0x130-0x140,0x142-0x159,0x15b-0x15e,"
     "0x160-0x165,0x167-0x174,0x176-0x178,0x17a-0x193,0x197,0x199-0x19c,"
-    "0x1a5-0x1a8";  /* V1.85 PQC: VerifyDigestSignature, SignDigest, Encapsulate, Decapsulate */
+    /* V1.85 PQC commands: VerifyDigestSignature(0x1A5), SignDigest(0x1A6),
+     * Encapsulate(0x1A7), Decapsulate(0x1A8), plus Phase 4 sequence commands:
+     * VerifySequenceComplete(0x1A3), SignSequenceComplete(0x1A4),
+     * VerifySequenceStart(0x1A9), SignSequenceStart(0x1AA). */
+    "0x1a3-0x1aa";
 
 const char defaultAlgorithmsProfile[] =
     "rsa,rsa-min-size=1024,tdes,tdes-min-size=128,sha1,hmac,"

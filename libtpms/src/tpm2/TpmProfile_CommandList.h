@@ -221,14 +221,14 @@
 #define CC_NV_ReadPublic2             CC_NO	/* libtpms: NO */
 #define CC_SetCapability              CC_NO	/* libtpms: NO */
 /* V1.85 PQC commands */
-#define CC_VerifySequenceComplete     CC_NO	/* 0x1A3 — Phase 4 (needs MLDSA_SEQUENCE_OBJECT) */
-#define CC_SignSequenceComplete        CC_NO	/* 0x1A4 — Phase 4 */
+#define CC_VerifySequenceComplete     (CC_YES && (ALG_MLDSA || ALG_HASH_MLDSA))	/* 0x1A3 — Phase 4 §20.3 */
+#define CC_SignSequenceComplete        (CC_YES && (ALG_MLDSA || ALG_HASH_MLDSA))	/* 0x1A4 — Phase 4 §20.6 */
 #define CC_VerifyDigestSignature      (CC_YES && (ALG_MLDSA || ALG_HASH_MLDSA))	/* 0x1A5 */
 #define CC_SignDigest                 (CC_YES && (ALG_MLDSA || ALG_HASH_MLDSA))	/* 0x1A6 */
 #define CC_Encapsulate                (CC_YES && ALG_MLKEM)	/* 0x1A7 */
 #define CC_Decapsulate                (CC_YES && ALG_MLKEM)	/* 0x1A8 */
-#define CC_VerifySequenceStart        CC_NO	/* 0x1A9 — Phase 4 */
-#define CC_SignSequenceStart           CC_NO	/* 0x1AA — Phase 4 */
+#define CC_VerifySequenceStart        (CC_YES && (ALG_MLDSA || ALG_HASH_MLDSA))	/* 0x1A9 — Phase 4 §17.6 */
+#define CC_SignSequenceStart           (CC_YES && (ALG_MLDSA || ALG_HASH_MLDSA))	/* 0x1AA — Phase 4 §17.5 */
 
 /* kgold */
 #if 0						// libtpms: added

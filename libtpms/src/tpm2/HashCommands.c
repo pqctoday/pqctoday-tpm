@@ -177,6 +177,10 @@ TPM2_HashSequenceStart(
 #endif // CC_HashSequenceStart
 #include "Tpm.h"
 #include "SequenceUpdate_fp.h"
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+# include "PqcSequence_fp.h"
+#endif
 #if CC_SequenceUpdate  // Conditional expansion of this file
 TPM_RC
 TPM2_SequenceUpdate(
@@ -185,6 +189,25 @@ TPM2_SequenceUpdate(
 {
     OBJECT                  *object;
     HASH_OBJECT             *hashObject;
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+    /* V1.85 Phase 4: ML-DSA sign/verify sequences live in a separate slot pool
+     * (PqcSequence.c) and use a vendor-defined transient handle range. Dispatch
+     * those before falling through to the existing HASH_OBJECT path so the
+     * regular hash/HMAC/event sequences keep working unchanged.
+     *
+     * Per V1.85 §17.5: sign sequences for one-shot schemes (ML-DSA, EDDSA)
+     * reject SequenceUpdate with TPM_RC_ONE_SHOT_SIGNATURE — implemented in
+     * PqcSequenceUpdate. Verify sequences accept update per §17.6 (no
+     * exception for ML-DSA — TPM buffers the message, calls one-shot Verify
+     * at Complete time). */
+    if (PqcSequenceIsHandle(in->sequenceHandle)) {
+        PQC_SEQ_STATE *seq = PqcSequenceFromHandle(in->sequenceHandle);
+        if (seq == NULL)
+            return TPM_RCS_HANDLE + RC_SequenceUpdate_sequenceHandle;
+        return PqcSequenceUpdate(seq, in->buffer.t.buffer, in->buffer.t.size);
+    }
+#endif
     // Input Validation
     // Get sequence object pointer
     object = HandleToObject(in->sequenceHandle);

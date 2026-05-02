@@ -638,8 +638,20 @@ TPMI_DH_OBJECT_Unmarshal(TPMI_DH_OBJECT *target, BYTE **buffer, INT32 *size, BOO
 	BOOL isNotTransient = (*target < TRANSIENT_FIRST) || (*target > TRANSIENT_LAST);
 	BOOL isNotPersistent = (*target < PERSISTENT_FIRST) || (*target > PERSISTENT_LAST);
 	BOOL isNotLegalNull = (*target != TPM_RH_NULL) || !allowNull;
+#if (ALG_MLDSA || ALG_HASH_MLDSA) && \
+    (CC_SignSequenceStart || CC_VerifySequenceStart)
+	/* V1.85 Phase 4: ML-DSA sign/verify sequence handles are minted in
+	 * the vendor sub-range 0x80FF0000–0x80FF00FF (see PqcSequence_fp.h
+	 * PQC_SEQ_HANDLE_BASE/MAX). Treat them as valid transient handles
+	 * for unmarshal purposes; PqcSequenceFromHandle does the real lookup. */
+	BOOL isNotPqcSeq = (*target < (TPM_HANDLE)0x80FF0000)
+	                || (*target > (TPM_HANDLE)0x80FF00FF);
+#else
+	BOOL isNotPqcSeq = TRUE;
+#endif
 	if (isNotTransient &&
 	    isNotPersistent &&
+	    isNotPqcSeq &&
 	    isNotLegalNull) {
 	    rc = TPM_RC_VALUE;
 	    *target = orig_target; // libtpms added

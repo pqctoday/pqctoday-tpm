@@ -192,14 +192,14 @@ static const struct {
     COMMAND(NV_ReadPublic2, true, 0), // not supported
     COMMAND(SetCapability, true, 0), // not supported
     /* V1.85 PQC commands */
-    COMMAND(VerifySequenceComplete, true, 0), // Phase 4
-    COMMAND(SignSequenceComplete,   true, 0), // Phase 4
+    COMMAND(VerifySequenceComplete, true, 1), // live — Phase 4 ML-DSA verify-sequence
+    COMMAND(SignSequenceComplete,   true, 1), // live — Phase 4 ML-DSA sign-sequence
     COMMAND(VerifyDigestSignature,  true, 1), // live — ML-DSA / HashML-DSA verify-digest
     COMMAND(SignDigest,             true, 1), // live — ML-DSA / HashML-DSA sign-digest
     COMMAND(Encapsulate,           true, 1), // live — ML-KEM encapsulate
     COMMAND(Decapsulate,           true, 1), // live — ML-KEM decapsulate
-    COMMAND(VerifySequenceStart,   true, 0), // Phase 4
-    COMMAND(SignSequenceStart,     true, 0), // Phase 4
+    COMMAND(VerifySequenceStart,   true, 1), // live — Phase 4
+    COMMAND(SignSequenceStart,     true, 1), // live — Phase 4
     /* all new commands added here MUST have CAN_BE_DISABLE = true */
 #undef COMMAND
 };

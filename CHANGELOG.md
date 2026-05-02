@@ -4,7 +4,88 @@ All notable changes to pqctoday-tpm are documented here.
 
 ---
 
-## [Unreleased] — Phase 0 + Phase 2 + Phase 3 + Phase 3.5
+## [Unreleased] — Phase 0 + Phase 2 + Phase 3 + Phase 3.5 + Phase 3.5+1 + Phase 4 + Phase 4.1
+
+### Phase 4.1 — Full session-based ML-DSA sign/verify roundtrip (V1.85 §17.5/§17.6/§20.3/§20.6)
+
+Phase 4.1 wires PQC sequence handles (vendor sub-range `0x80FF0000-0x80FF00FF`,
+allocated by `PqcSequence.c`) into the existing libtpms authorization-area
+dispatcher. wolfTPM v4.0.0 PR #445 `mldsa_sign` example now completes with
+`TPMT_TK_VERIFIED` tickets carrying `tag = TPM_ST_MESSAGE_VERIFIED` for
+ML-DSA-44/65/87, demonstrating bilateral V1.85 conformance for the full
+sign/verify sequence path with two independent crypto stacks.
+
+**libtpms hooks (eight functions touched, all gated by `#if (ALG_MLDSA || ALG_HASH_MLDSA) && (CC_SignSequenceStart || CC_VerifySequenceStart)`):**
+
+- `Object.c HandleToObject` — graceful NULL for handles in the PQC sub-range (was `pAssert` fatal).
+- `Entity.c EntityGetAuthValue` — reads `PQC_SEQ_STATE.auth` via `PqcSequenceFromHandle()`.
+- `Entity.c EntityGetAuthPolicy` — returns `TPM_ALG_NULL` (PQC sequences have no policy).
+- `Entity.c EntityGetName` — falls back to handle-as-name (no `TPMT_PUBLIC` exists).
+- `Entity.c EntityGetLoadStatus` — bypasses `IsObjectPresent` for PQC handles.
+- `SessionProcess.c IsAuthValueAvailable` — TRUE (matches existing hash-sequence semantics).
+- `SessionProcess.c IsAuthPolicyAvailable` — FALSE (no policy on sequences).
+- `SessionProcess.c IsDAExempted` — TRUE (sequences are DA-exempt per the existing rule).
+
+**`RuntimeAlgorithm.c RuntimeAlgorithmCheckEnabled`** — V1.85 PQC algorithms (`TPM_ALG_MLDSA`, `TPM_ALG_HASH_MLDSA`, `TPM_ALG_MLKEM`) are treated as unconditionally enabled when `ALG_*` is compiled in. Per spec §8.7 Table 46 these are advertised through `TPMA_ML_PARAMETER_SET` (mandatory capability bit) and are **not** gated through libtpms's runtime-profile algorithm-enable mechanism. This bypass also makes wire-format conformance robust against state-load paths that may not consistently set the algorithm-enable bit (libtpms stores `RuntimeProfile` in NV with a JSON that re-applies on subsequent boots).
+
+**`CommandAttributeData.h`** — restored `HANDLE_1_USER` (and `HANDLE_2_USER` on `SignSequenceComplete`) on the four sequence commands. Previously dropped in V0; restored in V1 now that PQC handles are first-class auth-area citizens.
+
+**Tests graduated:**
+
+- `tests/crossval/src/test_pqc_phase3.c` Test 7 now uses `TPM_ST_SESSIONS` for `SignSequenceComplete` (TWO PW sessions: `@sequenceHandle` + `@keyHandle`) and `VerifySequenceComplete` (ONE PW session: `@sequenceHandle`), with `SequenceUpdate(verify)` accepted per §17.6. Asserts response tag `TPM_ST_MESSAGE_VERIFIED` per §20.3 Table 119.
+- `tests/compliance/run_wolftpm_runtime_xcheck.sh` graduated from "expected Phase-4 stub" check to full "Sign + Verify roundtrip OK" assertions: signature-size byte-exact (FIPS 204), `TPM_ST_MESSAGE_VERIFIED` ticket emitted, "Round-trip OK" message present. All three ML-DSA parameter sets exercise the full path.
+
+**Verification:**
+
+```
+make compliance:    104 passed, 0 failed, 0 skipped (unchanged from G2)
+make crossval:      test_pqc_phase3 17/0 (Phase 4.1 sessions path)
+make wolftpm-xcheck: 29 passed, 0 failed (was 23/0 with 3 stub guards)
+```
+
+Bilateral V1.85 RC4 cross-implementation conformance for the full PQC algorithm matrix (3 ML-KEM + 3 ML-DSA parameter sets, both sign/verify and encap/decap directions) demonstrated by independent crypto stacks: libtpms+OpenSSL 3.6.2 ↔ wolfTPM v4.0.0+wolfCrypt.
+
+### Phase 4 V0 — ML-DSA sign/verify sequence command handlers
+
+Implements the four V1.85 RC4 sequence commands per spec wire format:
+
+- `TPM2_SignSequenceStart` `0x1AA` — Part 3 §17.5 Tables 89–90
+- `TPM2_VerifySequenceStart` `0x1A9` — Part 3 §17.6 Tables 87–88
+- `TPM2_VerifySequenceComplete` `0x1A3` — Part 3 §20.3 Tables 118–119
+- `TPM2_SignSequenceComplete` `0x1A4` — Part 3 §20.6 Tables 124–125
+
+**Spec rules enforced:**
+
+- §17.5: `SequenceUpdate` against an ML-DSA sign sequence returns `TPM_RC_ONE_SHOT_SIGNATURE` (FIPS 204 §5.2: μ is computed over the entire message before signing — not streamable).
+- §17.6: Verify sequences accept `SequenceUpdate` (TPM buffers the message and calls one-shot ML-DSA-Verify at Complete).
+- §20.3: `VerifySequenceComplete` returns `TPMT_TK_VERIFIED` with `tag = TPM_ST_MESSAGE_VERIFIED` on success.
+- §20.6: `SignSequenceComplete` returns `TPM_RC_ONE_SHOT_SIGNATURE` if the scheme is multi-pass and the buffer is non-empty.
+- §6.6.4: New error codes `TPM_RC_ONE_SHOT_SIGNATURE` (`RC_FMT1+0x02C`) and `TPM_RC_EXT_MU` (`RC_FMT1+0x02B`).
+
+**V0 architecture:**
+
+- Sequence state lives in a parallel slot pool (`PqcSequence.{c,h}`) keyed by handles in the vendor sub-range `0x80FF0000-0x80FF00FF`.
+- `PqcSequenceCommands.c` provides the four spec handlers.
+- `HashCommands.c` `TPM2_SequenceUpdate` dispatches PQC handles to `PqcSequenceUpdate` before falling through to the existing HASH_OBJECT path; the existing hash/HMAC/event sequences keep working unchanged.
+- `Unmarshal.c` `TPMI_DH_OBJECT_Unmarshal` accepts the PQC sub-range.
+- `Entity.c` `EntityGetLoadStatus` skips `IsObjectPresent` for PQC handles.
+- `CryptMlDsa.c` gains `CryptMlDsaSignMessage` / `CryptMlDsaValidateSignatureMessage` helpers that operate on raw `(BYTE*, UINT32)` buffers (existing helpers take `TPM2B_DIGEST` capped at `MAX_DIGEST_SIZE = 64 B`, too small for `SignSequenceComplete`'s `TPM2B_MAX_BUFFER ≈ 1024 B`).
+
+V0 limitations addressed in Phase 4.1: PQC sequence handles weren't yet integrated with `HandleToObject` / `EntityGetAuthValue`, so V0 dropped `HANDLE_*_USER` and used `TPM_ST_NO_SESSIONS`. Phase 4.1 (above) restored the spec-canonical session-based path.
+
+### Phase 3.5+1 — Capability + remaining gap closures
+
+After surfacing the wire-format issues in Phase 3.5, this batch closed the rest of the V1.85 RC4 spec-conformance backlog:
+
+- **`TPM2_Encapsulate` response order** (Part 3 §14.10 Table 61): swapped `Encapsulate_Out` field order to `{ sharedSecret, ciphertext }` per spec. Caught by wolfTPM cross-check (was reporting `ct=32 / ss=64` for ML-KEM-512 instead of FIPS 203 `ct=768 / ss=32`). Commit `23a718f6`.
+- **`s_AlgorithmProperties` registry** (`RuntimeAlgorithm.c`): added entries for `TPM_ALG_MLKEM`, `TPM_ALG_MLDSA`, `TPM_ALG_HASH_MLDSA` so JSON profile naming and `RuntimeAlgorithmCheckEnabled` work consistently. Commit `2403f4ca`.
+- **`TPMA_ML_PARAMETER_SET` capability** (Part 2 §8.6 Table 22 + §8.7 Table 46): `TPM_PT_ML_PARAMETER_SETS = PT_FIXED+49` GetCapability handler, advertises `mlKem_512/768/1024 + mlDsa_44/65/87 + extMu` bits.
+- **`allowExternalMu` enforcement** (Part 2 §12.2.3.6 Table 229): `TPM2_SignDigest` / `TPM2_VerifyDigestSignature` reject ML-DSA keys with `allowExternalMu=NO`. Object creation returns new error code `TPM_RC_EXT_MU` (RC_FMT1+0x02B) when `allowExternalMu=YES` is requested but `TPM_SUPPORTS_ML_EXT_MU` is not set.
+- **Algorithm-profile registry consistency** (`defaultAlgorithmsProfile`): appended `mlkem,mldsa,hash-mldsa` so the `default-v1` profile actually enables the entries we registered.
+- **`docs/upstream-issues/`**: drafted the wolfTPM `mlkem.h` ↔ `wc_mlkem.h` upstream PR with full reproducer and one-line patch; captured wolfSSL build incantation and "what's actually broken vs what looks broken" notes.
+- **GitHub Actions**: extended `ci.yml` with crossval + compliance steps; added `xcheck.yml` for the heavyweight wolfTPM cross-check (manual + nightly + PR label).
+
+Verification: 96 → 100 → 104 PASS / 0 FAIL across compliance suite.
 
 ### Phase 3.5 — V1.85 RC4 wire-format conformance for PQC parameter blocks
 

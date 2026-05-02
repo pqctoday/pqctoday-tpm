@@ -11,25 +11,27 @@ Fork of [libtpms v0.10.2](https://github.com/stefanberger/libtpms) + [swtpm v0.1
 | Phase | Scope | Status |
 | --- | --- | --- |
 | **1 — Foundation** | Algorithm IDs, crypto primitives (ML-DSA + ML-KEM), marshal/unmarshal, NIST ACVP KATs | ✅ Complete |
-| **2 — V1.85 Commands** | `TPM2_Encapsulate`, `TPM2_Decapsulate`, `TPM2_SignDigest`, `TPM2_VerifyDigestSignature` — live; sequence commands wired, pending Phase 4 | ✅ In progress (4/8 live) |
+| **2 — V1.85 Commands** | `TPM2_Encapsulate`, `TPM2_Decapsulate`, `TPM2_SignDigest`, `TPM2_VerifyDigestSignature` | ✅ Complete |
 | **3 — Key Hierarchy** | ML-KEM EK + ML-DSA AK provisioning, `MakeCredential`/`ActivateCredential` via ML-KEM, `CryptSelectSignScheme` for ML-DSA, self-signed X.509 PQC EK certs | ✅ Complete |
-| 4 — Attestation | `TPM2_Quote`, `TPM2_Certify`, PCR banks | 🔲 Not started |
+| **3.5 — V1.85 RC4 wire-format conformance** | `TPMS_MLDSA_PARMS.allowExternalMu` + `TPMS_MLKEM_PARMS.symmetric` (Tables 229/231); `TPM2_Encapsulate` response order (Table 61); `TPM_RC_EXT_MU` + `TPM_RC_ONE_SHOT_SIGNATURE` (§6.6.4); `TPMA_ML_PARAMETER_SET` capability (Table 46) | ✅ Complete |
+| **4 — Sequence Commands** | `TPM2_SignSequenceStart/Complete`, `TPM2_VerifySequenceStart/Complete` (V1.85 §17.5/§17.6/§20.3/§20.6) — full bilateral cross-impl roundtrip | ✅ Complete |
+| 4.x — Attestation | `TPM2_Quote`, `TPM2_Certify`, PCR banks with ML-DSA AK | 🔲 Not started |
 | 5 — WASM | Emscripten build, browser API, PQC Today integration | 🔲 Not started |
 
 **What works today:**
 
 - `TPM2_CreatePrimary` / `TPM2_Create` / `TPM2_Load` with ML-DSA and ML-KEM keys
-- `TPM2_Encapsulate` — encapsulate against a loaded ML-KEM public key, returns ciphertext + shared secret
-- `TPM2_Decapsulate` — decapsulate with a loaded ML-KEM private key, returns shared secret
-- `TPM2_SignDigest` — sign a pre-computed digest with a loaded ML-DSA or HashML-DSA key
-- `TPM2_VerifyDigestSignature` — verify an ML-DSA / HashML-DSA signature over a pre-computed digest, returns `TPM_ST_DIGEST_VERIFIED` ticket
-- `MakeCredential` / `ActivateCredential` transport via ML-KEM-768 (`CryptSecretEncrypt`/`Decrypt` ML-KEM path)
-- ML-KEM-768 EK and ML-DSA-65 AK auto-provisioned by `swtpm_setup` at Docker startup (persistent handles `0x810100A0`/`0x810100A1`)
-- Self-signed X.509 EK certs (`mlkem_ek.cert`, `mldsa_ak.cert`) emitted by `swtpm_setup --create-ek-cert`: ML-KEM-768 / ML-DSA-65 SPKI signed with an ephemeral ML-DSA-65 issuer (NIST CSOR OIDs auto-emitted by OpenSSL 3.5+; FIPS 204 §5.4 hash-and-sign internally)
+- `TPM2_Encapsulate` / `TPM2_Decapsulate` — ML-KEM key encapsulation; `sharedSecret` first per V1.85 §14.10 Table 61; FIPS 203 byte-exact sizes (768 / 1088 / 1568 B ciphertext for 512 / 768 / 1024)
+- `TPM2_SignDigest` / `TPM2_VerifyDigestSignature` — ML-DSA / HashML-DSA digest sign+verify with `TPMA_OBJECT.restricted` rejection (§29.2.1) and `allowExternalMu` enforcement (§12.2.3.6)
+- `TPM2_SignSequenceStart` / `TPM2_SignSequenceComplete` — full message ML-DSA signing; FIPS 204 byte-exact signatures (2420 / 3309 / 4627 B for 44 / 65 / 87); V1.85 §17.5/§20.6
+- `TPM2_VerifySequenceStart` / `TPM2_SequenceUpdate` / `TPM2_VerifySequenceComplete` — streaming ML-DSA verify; emits `TPMT_TK_VERIFIED` with tag `TPM_ST_MESSAGE_VERIFIED` per §20.3 Table 119
+- `MakeCredential` / `ActivateCredential` transport via ML-KEM-768 (`CryptSecretEncrypt` / `Decrypt` ML-KEM path)
+- `TPM2_GetCapability(TPM_PT_ML_PARAMETER_SETS)` — returns `TPMA_ML_PARAMETER_SET` per V1.85 §8.6 Table 22 + §8.7 Table 46
+- ML-KEM-768 EK + ML-DSA-65 AK auto-provisioned by `swtpm_setup` at Docker startup (handles `0x810100A0` / `0x810100A1`)
+- Self-signed X.509 EK certs (`mlkem_ek.cert`, `mldsa_ak.cert`) via `swtpm_setup --create-ek-cert`: ML-KEM-768 / ML-DSA-65 SPKI signed with ephemeral ML-DSA-65 issuer (NIST CSOR OIDs auto-emitted by OpenSSL 3.5+)
 - All classical TPM operations (RSA, ECC, symmetric) work unchanged via the swtpm socket
-- TCG V1.85 PQC compliance suite: **92 passed, 0 failed, 0 skipped**
-
-**Streaming sequence commands** (`TPM2_SignSequenceStart/Complete`, `TPM2_VerifySequenceStart/Complete`) are dispatch-wired and return `TPM_RC_COMMAND_CODE` until Phase 4, which requires a new `MLDSA_SEQUENCE_OBJECT` type for holding live `EVP_MD_CTX*` state across command boundaries.
+- TCG V1.85 RC4 compliance suite: **104 passed, 0 failed, 0 skipped**
+- Cross-implementation runtime cross-check vs **wolfTPM v4.0.0 PR #445**: **29 passed, 0 failed** — bilateral V1.85 conformance for the full PQC matrix proven by two independent crypto stacks (libtpms+OpenSSL 3.6.2 ↔ wolfTPM+wolfCrypt)
 
 ---
 
@@ -47,14 +49,14 @@ Fork of [libtpms v0.10.2](https://github.com/stefanberger/libtpms) + [swtpm v0.1
 
 | Command | Code | Status |
 | --- | --- | --- |
+| `TPM2_VerifySequenceComplete` | `0x1A3` | ✅ Live (Phase 4) |
+| `TPM2_SignSequenceComplete` | `0x1A4` | ✅ Live (Phase 4) |
 | `TPM2_VerifyDigestSignature` | `0x1A5` | ✅ Live (Phase 2) |
 | `TPM2_SignDigest` | `0x1A6` | ✅ Live (Phase 2) |
 | `TPM2_Encapsulate` | `0x1A7` | ✅ Live (Phase 2) |
 | `TPM2_Decapsulate` | `0x1A8` | ✅ Live (Phase 2) |
-| `TPM2_VerifySequenceComplete` | `0x1A3` | 🔲 Phase 4 |
-| `TPM2_SignSequenceComplete` | `0x1A4` | 🔲 Phase 4 |
-| `TPM2_VerifySequenceStart` | `0x1A9` | 🔲 Phase 4 |
-| `TPM2_SignSequenceStart` | `0x1AA` | 🔲 Phase 4 |
+| `TPM2_VerifySequenceStart` | `0x1A9` | ✅ Live (Phase 4) |
+| `TPM2_SignSequenceStart` | `0x1AA` | ✅ Live (Phase 4) |
 
 ---
 
@@ -221,7 +223,7 @@ openssl list -signature-algorithms | grep ML-DSA
 # Cross-validation: OpenSSL EVP round-trips + NIST ACVP KATs + TPM2_CreatePrimary
 make crossval
 
-# Full compliance: 83 checks across §5, §9-§15 of TCG V1.85
+# Full compliance: 104 checks across §5, §9-§15, §17, §20 of V1.85 RC4
 make compliance
 ```
 
@@ -231,13 +233,15 @@ make compliance
 
 | Target | What runs | Expected |
 | --- | --- | --- |
-| `make crossval` | OpenSSL EVP round-trips (ML-DSA-{44,65,87}, ML-KEM-{512,768,1024}), 75 NIST ACVP ML-DSA keyGen KATs, `TPM2_CreatePrimary(MLDSA-65)` end-to-end + `test_pqc_phase3` | 7 + 4 + 11 pass |
+| `make crossval` | OpenSSL EVP round-trips (ML-DSA-{44,65,87}, ML-KEM-{512,768,1024}), 75 NIST ACVP ML-DSA keyGen KATs, `TPM2_CreatePrimary(MLDSA-65)` end-to-end + `test_pqc_phase3` (Phase 3 + 3.5 + 4 + 4.1) | **7 + 4 + 17 pass** |
 | `make crossval-softhsm` | All of above + softhsmv3 C++ cross-verify (sign↔verify, encap↔decap) | all pass |
-| `make compliance` | 96-check TCG V1.85 RC4 compliance suite | **96 PASS / 0 FAIL / 0 SKIP** |
-| `make wolftpm-xcheck` | **Cross-implementation runtime check.** Drives wolfTPM v4.0.0 PR #445 (wolfCrypt backend) against our libtpms (OpenSSL 3.6.2) over swtpm socket — asserts FIPS 203/204 byte sizes for ML-KEM-{512,768,1024} Encap/Decap roundtrips and ML-DSA-{44,65,87} CreatePrimary | **23/23 pass** |
+| `make compliance` | 104-check TCG V1.85 RC4 source-level compliance suite | **104 PASS / 0 FAIL / 0 SKIP** |
+| `make wolftpm-xcheck` | **Cross-implementation runtime check.** Drives wolfTPM v4.0.0 PR #445 (wolfCrypt backend) against our libtpms (OpenSSL 3.6.2) over swtpm socket — asserts FIPS 203/204 byte sizes for ML-KEM-{512,768,1024} Encap+Decap and full ML-DSA-{44,65,87} sign+verify sequence roundtrip with `TPM_ST_MESSAGE_VERIFIED` ticket emission | **29 PASS / 0 FAIL** |
 | `libtpms make check` | Upstream libtpms unit tests | 10/10 pass |
 
-`make wolftpm-xcheck` is the strongest spec-conformance test we have — two completely independent V1.85 implementations agreeing on the byte-on-the-wire layout. Setup is one-shot: `make docker-xcheck` builds an image with pinned wolfSSL + wolfTPM (≈4 min); subsequent `make wolftpm-xcheck` runs in seconds.
+**Total spec-conformance assertions: 150 PASS / 0 FAIL** across all four suites.
+
+`make wolftpm-xcheck` is the strongest spec-conformance test — two completely independent V1.85 implementations (libtpms+OpenSSL 3.6.2 ↔ wolfTPM v4.0.0+wolfCrypt) agreeing on the byte-on-the-wire layout for the full PQC algorithm matrix. Setup is one-shot: `make docker-xcheck` builds an image with pinned wolfSSL + wolfTPM (≈4 min); subsequent `make wolftpm-xcheck` runs in seconds.
 
 > **macOS note:** The cross-val binaries are Linux ELF and run inside Docker. The compliance
 > script auto-detects Homebrew OpenSSL 3.6 (`/opt/homebrew/opt/openssl@3.6/bin/openssl`) on
@@ -515,6 +519,44 @@ pqctoday-tpm/
   adds `MLDSA_SEQUENCE_OBJECT` (a handle-tracked struct holding a live
   `EVP_MD_CTX*` across command boundaries). wolfTPM PR #445 has the same
   architectural gap for identical reasons.
+
+---
+
+## Documentation
+
+In-tree references organized by purpose:
+
+### Spec extracts and conformance reports
+
+| Path | Purpose |
+| --- | --- |
+| [`docs/standards/`](docs/standards/) | TCG TPM 2.0 Library Specification V1.85 RC4 PDFs (Parts 0–3) — authoritative reference for every wire-format choice |
+| [`docs/TPMdocextract.md`](docs/TPMdocextract.md) | Curated spec extract: algorithm IDs (§6.3), parameter sets (§11), structure definitions (§12.2.3 Tables 229/230/231), capability bits (§8.7 Table 46), Phase 3 + 4 command wire formats (§12.4–§12.6, §14.10/§14.11, §17.5/§17.6, §20.3/§20.6, §29.2.1) |
+| [`tests/compliance/cross-check-report.md`](tests/compliance/cross-check-report.md) | Side-by-side comparison vs wolfTPM v4.0.0 PR #445 + V1.85 RC4 spec; runtime cross-validation snapshots; per-commit resolution log of every spec-conformance gap closed |
+| [`CHANGELOG.md`](CHANGELOG.md) | Phase-by-phase implementation history with spec section citations on every change |
+
+### Upstream tracking
+
+| Path | Purpose |
+| --- | --- |
+| [`docs/upstream-issues/wolfTPM-001-mlkem-header-rename.md`](docs/upstream-issues/wolfTPM-001-mlkem-header-rename.md) | Ready-to-file PR draft for wolfTPM `configure.ac` — fixes `mlkem.h` vs `wc_mlkem.h` build break against wolfSSL HEAD |
+| [`docs/upstream-issues/wolfSSL-build-notes.md`](docs/upstream-issues/wolfSSL-build-notes.md) | Verified-good wolfSSL build incantation for the cross-check, with each flag's purpose explained; documents which "bugs" were misdiagnoses |
+
+### Test runners
+
+| Path | Purpose |
+| --- | --- |
+| [`tests/compliance/v185_compliance.sh`](tests/compliance/v185_compliance.sh) | 104-check V1.85 RC4 source-level compliance suite |
+| [`tests/compliance/v185_wolftpm_compliance.sh`](tests/compliance/v185_wolftpm_compliance.sh) | Same source-level checks against wolfTPM PR #445 headers |
+| [`tests/compliance/run_wolftpm_runtime_xcheck.sh`](tests/compliance/run_wolftpm_runtime_xcheck.sh) | Runtime cross-check orchestration: starts swtpm, drives wolfTPM PQC clients, asserts FIPS 203/204 byte sizes + V1.85 wire-format conformance |
+| [`tests/crossval/src/test_pqc_phase3.c`](tests/crossval/src/test_pqc_phase3.c) | Direct-libtpms harness covering CreatePrimary, MakeCredential / ActivateCredential, `allowExternalMu` gate (Test 6), full ML-DSA sign/verify sequence roundtrip (Test 7) |
+
+### CI workflows
+
+| Path | Purpose |
+| --- | --- |
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Push / PR: build OpenSSL 3.6.2 + libtpms + swtpm + crossval + 104-check compliance |
+| [`.github/workflows/xcheck.yml`](.github/workflows/xcheck.yml) | Heavy runtime cross-check (manual + nightly + PR label `xcheck`); pinned wolfSSL `7b53303` + wolfTPM `fbbf6fe` |
 
 ---
 

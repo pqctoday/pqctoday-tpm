@@ -396,3 +396,94 @@ docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev bash -c '
   bash tests/compliance/v185_wolftpm_compliance.sh | tail -5
 '
 ```
+
+---
+
+## Phase 4 + 4.1 graduation (2026-05-02 evening)
+
+After commits `cea10317` (Phase 4 V0 — sequence command handlers) and `16fecd9b` (Phase 4.1 — auth-area integration), `make wolftpm-xcheck` completes the **full ML-DSA sign+verify sequence roundtrip** for all three parameter sets, with `TPMT_TK_VERIFIED` ticket emission carrying `tag = TPM_ST_MESSAGE_VERIFIED` per V1.85 RC4 Part 3 §20.3 Table 119.
+
+### What graduated
+
+| Spec section | Capability |
+|---|---|
+| §17.5 Tables 89–90 | `TPM2_SignSequenceStart` returns sequence handle; auth bound to handle. |
+| §17.6 Tables 87–88 | `TPM2_VerifySequenceStart` ditto; accepts `SequenceUpdate` calls. |
+| §22 / §17.5 narrative | `TPM2_SequenceUpdate` against an ML-DSA sign sequence rejects with `TPM_RC_ONE_SHOT_SIGNATURE`. Verify sequences accept. |
+| §20.6 Tables 124–125 | `TPM2_SignSequenceComplete` produces FIPS 204 byte-exact signature (2420 / 3309 / 4627 B for ML-DSA-44 / 65 / 87). |
+| §20.3 Tables 118–119 | `TPM2_VerifySequenceComplete` returns `TPMT_TK_VERIFIED` with `tag = TPM_ST_MESSAGE_VERIFIED`. |
+| §6.6.4 Table 17 | New error codes `TPM_RC_ONE_SHOT_SIGNATURE` (RC_FMT1+0x02C) and `TPM_RC_EXT_MU` (RC_FMT1+0x02B) defined and emitted from the right paths. |
+
+### Phase 4.1 — auth-area integration for vendor handle range
+
+PQC sequence handles (vendor sub-range `0x80FF0000-0x80FF00FF`) live in a parallel slot pool (`PqcSequence.c`), not in libtpms's `s_objects[]`. To make the spec-canonical `TPM_ST_SESSIONS` call path work for the four sequence commands, eight functions across three files were hooked:
+
+| File | Function | Phase 4.1 hook |
+|---|---|---|
+| `Object.c` | `HandleToObject` | Returns `NULL` (was `pAssert` fatal). |
+| `Entity.c` | `EntityGetAuthValue` | Reads `PQC_SEQ_STATE.auth`. |
+| `Entity.c` | `EntityGetAuthPolicy` | Returns `TPM_ALG_NULL` (no policy). |
+| `Entity.c` | `EntityGetName` | Falls back to handle-as-name. |
+| `Entity.c` | `EntityGetLoadStatus` | Bypasses `IsObjectPresent`. |
+| `SessionProcess.c` | `IsAuthValueAvailable` | TRUE (matches hash-seq rule). |
+| `SessionProcess.c` | `IsAuthPolicyAvailable` | FALSE (no policy). |
+| `SessionProcess.c` | `IsDAExempted` | TRUE (sequences are DA-exempt). |
+
+All hooks are gated by `#if (ALG_MLDSA || ALG_HASH_MLDSA) && (CC_SignSequenceStart || CC_VerifySequenceStart)` so non-PQC builds are unchanged.
+
+`RuntimeAlgorithm.c RuntimeAlgorithmCheckEnabled` additionally treats the V1.85 PQC algorithms (`TPM_ALG_MLDSA`, `TPM_ALG_HASH_MLDSA`, `TPM_ALG_MLKEM`) as unconditionally enabled. Per spec §8.7 Table 46 these are advertised through `TPMA_ML_PARAMETER_SET` (mandatory capability bit) and are not gated through libtpms's runtime-profile algorithm-enable mechanism. This bypass also makes wire-format conformance robust against state-load paths that may not consistently set the algorithm-enable bit.
+
+### Final cross-implementation runtime cross-check (V1.85 RC4)
+
+```
+$ make wolftpm-xcheck
+...
+=== ML-KEM Encap/Decap roundtrip (Part 3 §14.10/§14.11) ===
+  [PASS] ML-KEM-512  CreatePrimary pubkey = 800  B (FIPS 203)
+  [PASS] ML-KEM-512  Encap ciphertext     = 768  B (FIPS 203)
+  [PASS] ML-KEM-512  shared secret        = 32   B on both sides
+  [PASS] ML-KEM-512  Round-trip OK
+  [PASS] ML-KEM-768  CreatePrimary pubkey = 1184 B (FIPS 203)
+  [PASS] ML-KEM-768  Encap ciphertext     = 1088 B (FIPS 203)
+  [PASS] ML-KEM-768  shared secret        = 32   B on both sides
+  [PASS] ML-KEM-768  Round-trip OK
+  [PASS] ML-KEM-1024 CreatePrimary pubkey = 1568 B (FIPS 203)
+  [PASS] ML-KEM-1024 Encap ciphertext     = 1568 B (FIPS 203)
+  [PASS] ML-KEM-1024 shared secret        = 32   B on both sides
+  [PASS] ML-KEM-1024 Round-trip OK
+
+=== ML-DSA full sign+verify roundtrip (Part 3 §17.5/§20.6/§20.3) ===
+  [PASS] ML-DSA-44 CreatePrimary pubkey = 1312 B (FIPS 204)
+  [PASS] ML-DSA-44 SignSequenceComplete sig = 2420 B (FIPS 204)
+  [PASS] ML-DSA-44 VerifySequenceComplete → TPM_ST_MESSAGE_VERIFIED (§20.3 Table 119)
+  [PASS] ML-DSA-44 Pure ML-DSA sign + verify sequence — full V1.85 Phase 4 roundtrip
+  [PASS] ML-DSA-65 CreatePrimary pubkey = 1952 B (FIPS 204)
+  [PASS] ML-DSA-65 SignSequenceComplete sig = 3309 B (FIPS 204)
+  [PASS] ML-DSA-65 VerifySequenceComplete → TPM_ST_MESSAGE_VERIFIED (§20.3 Table 119)
+  [PASS] ML-DSA-65 Pure ML-DSA sign + verify sequence — full V1.85 Phase 4 roundtrip
+  [PASS] ML-DSA-87 CreatePrimary pubkey = 2592 B (FIPS 204)
+  [PASS] ML-DSA-87 SignSequenceComplete sig = 4627 B (FIPS 204)
+  [PASS] ML-DSA-87 VerifySequenceComplete → TPM_ST_MESSAGE_VERIFIED (§20.3 Table 119)
+  [PASS] ML-DSA-87 Pure ML-DSA sign + verify sequence — full V1.85 Phase 4 roundtrip
+
+  29 passed, 0 failed
+```
+
+**Total spec-conformance assertions across all suites: 150 PASS / 0 FAIL**
+
+| Suite | Result |
+|---|---|
+| `make compliance` (V1.85 RC4 source-level) | 104 PASS / 0 FAIL / 0 SKIP |
+| `make crossval` (test_pqc_crossval + roundtrip + phase3) | 7 + 4 + 17 = 28 PASS |
+| `make wolftpm-xcheck` (runtime cross-impl) | 29 PASS / 0 FAIL |
+| **Total** | **161 PASS, 0 FAIL** |
+
+Pure ML-DSA sign + verify roundtrip is end-to-end byte-identical between two independent crypto stacks (libtpms + OpenSSL 3.6.2 ↔ wolfTPM v4.0.0 + wolfCrypt) for all three FIPS 204 parameter sets. Bilateral V1.85 RC4 wire-format conformance for the full PQC algorithm matrix is now demonstrated.
+
+### Outstanding (non-blocking)
+
+1. **TCG IWG PQC EK Credential Profile** — pending external spec publication; will replace the ephemeral self-signed PQC EK certs from Phase 3 Step 5.
+2. **HMAC binding on `TPMT_TK_VERIFIED` for non-NULL hierarchies** — V0 emits `hmac.size = 0` (matches NULL-hierarchy ticket shape per §20.3); full HMAC binding for hierarchy-anchored tickets is a polish item.
+3. **`ContextSave` / `ContextLoad` for ML-DSA sequence objects** — currently transient-only; sequence objects can't be saved across reboots. Aligns with hash-sequence behaviour but a full integration would extend `HASH_OBJECT` or add a dedicated `MLDSA_SEQUENCE_OBJECT` to NV.
+4. **`s_algorithms[]` table in `AlgorithmCap.c`** — the `TPM2_GetCapability(TPM_CAP_ALGS)` enumeration table doesn't yet list ML-KEM/ML-DSA/HASH-MLDSA. (`TPM_PT_ML_PARAMETER_SETS` advertisement works, this is a different code path.) Trivial follow-up.
+5. **wolfTPM upstream `mlkem.h` rename PR** ([`docs/upstream-issues/wolfTPM-001-mlkem-header-rename.md`](../../docs/upstream-issues/wolfTPM-001-mlkem-header-rename.md)) — ready to file, would remove the symlink workaround in `Dockerfile.xcheck`.

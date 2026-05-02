@@ -4553,11 +4553,12 @@ Encapsulate_COMMAND_DESCRIPTOR_t _EncapsulateData = {
     /* inSize        */ (UINT16)(sizeof(Encapsulate_In)),
     /* outSize       */ (UINT16)(sizeof(Encapsulate_Out)),
     /* offsetOfTypes */ offsetof(Encapsulate_COMMAND_DESCRIPTOR_t, types),
-    /* offsets       */ {(UINT16)(offsetof(Encapsulate_Out, sharedSecret))},
+    /* V1.85 RC4 §14.10 Table 61: response = { sharedSecret, ciphertext }. */
+    /* offsets       */ {(UINT16)(offsetof(Encapsulate_Out, ciphertext))},
     /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
                          END_OF_LIST,
-                         TPM2B_KEM_CIPHERTEXT_P_MARSHAL,
                          TPM2B_SHARED_SECRET_P_MARSHAL,
+                         TPM2B_KEM_CIPHERTEXT_P_MARSHAL,
                          END_OF_LIST}
 };
 #define _EncapsulateDataAddress (&_EncapsulateData)

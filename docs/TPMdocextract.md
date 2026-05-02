@@ -242,7 +242,81 @@ New entries in `TPMI_ALG_PUBLIC` (Table 224, p.191):
 
 ---
 
-### 5.6 Key/Secret Exchange (Part 2 §11.4, Table 222, p.189)
+### 5.6 PQC Public-Parameter Structures (Part 2 §12.2.3, Tables 229-231)
+
+> **Critical for wire-format compliance.** These structures appear in `TPMT_PUBLIC.parameters` for `TPM_ALG_MLDSA` / `TPM_ALG_HASH_MLDSA` / `TPM_ALG_MLKEM` keys. Field order on the wire MUST match the spec exactly — wolfTPM cross-check (May 2026) caught two omissions in libtpms here, fixed in Phase 3.5.
+
+#### TPMS_MLDSA_PARMS (§12.2.3.6, Table 229) — V1.85 NEW
+
+```
+struct TPMS_MLDSA_PARMS {
+    TPMI_MLDSA_PARMS  parameterSet;     // ML-DSA parameter set ID (44/65/87)
+    TPMI_YES_NO       allowExternalMu;  // YES → key usable with TPM2_SignDigest +
+                                        //       TPM2_VerifyDigestSignature; the
+                                        //       digest field is interpreted as the
+                                        //       512-byte external Mu (μ) value
+                                        //       computed per FIPS 204
+};
+```
+
+**Wire size:** 3 bytes (UINT16 + BYTE).
+
+When `allowExternalMu = YES`, the spec mandates that:
+- `TPM2_SignDigest` and `TPM2_VerifyDigestSignature` accept the key.
+- ML-DSA keys can ALWAYS be used with `TPM2_SignSequenceComplete` and `TPM2_VerifySequenceComplete` regardless of this flag.
+- Object creation and `TPM2_TestParms()` return `TPM_RC_EXT_MU` if `allowExternalMu` is YES but the parameter set or implementation doesn't support external-Mu.
+
+#### TPMS_HASH_MLDSA_PARMS (§12.2.3.7, Table 230) — V1.85 NEW (Pre-Hash ML-DSA)
+
+```
+struct TPMS_HASH_MLDSA_PARMS {
+    TPMI_MLDSA_PARMS  parameterSet;  // ML-DSA parameter set ID
+    TPMI_ALG_HASH     hashAlg;       // pre-hash function PH (e.g. SHA-256)
+};
+```
+
+**Wire size:** 4 bytes (UINT16 + UINT16).
+
+#### TPMS_MLKEM_PARMS (§12.2.3.8, Table 231) — V1.85 NEW
+
+```
+struct TPMS_MLKEM_PARMS {
+    TPMT_SYM_DEF_OBJECT+  symmetric;     // FIRST. For restricted decryption
+                                         // keys → AES/CAMELLIA + keyBits + mode.
+                                         // Otherwise → TPM_ALG_NULL (no keyBits/mode).
+    TPMI_MLKEM_PARMS      parameterSet;  // ML-KEM parameter set ID (512/768/1024)
+};
+```
+
+**Wire size:** depends on `symmetric.algorithm`:
+- AES-128-CFB restricted EK: `2 + 2 + 2 + 2` = **8 bytes** (alg + keyBits + mode + parameterSet).
+- TPM_ALG_NULL: `2 + 2` = **4 bytes** (alg + parameterSet, no keyBits/mode).
+
+> ⚠ **Field order matters.** `symmetric` is FIRST per the spec. libtpms versions before commit `ea52cf9d` (Phase 3.5) had only `parameterSet`; that violated wire-format conformance and broke runtime cross-implementation interop with wolfTPM.
+
+---
+
+### 5.7 ML-DSA Parameter-Set Capability (Part 2 §6 Table 46) — V1.85 NEW
+
+```
+TPMA_ML_PARAMETER_SET (UINT32 attributes)
+  bit 0       supports ML-KEM-512
+  bit 1       supports ML-KEM-768
+  bit 2       supports ML-KEM-1024
+  bit 3       supports ML-DSA-44
+  bit 4       supports ML-DSA-65
+  bit 5       supports ML-DSA-87
+  bit 6       Indicates support for allowExternalMu for ML-DSA
+  bit 31:7    Reserved
+```
+
+Read via `TPM2_GetCapability(TPM_CAP_TPM_PROPERTIES, TPM_PT_ML_PARAMETER_SETS)`. A TPM that exposes `TPMS_MLDSA_PARMS.allowExternalMu = YES` MUST advertise bit 6 here.
+
+> **Implementation gap (open):** libtpms supports the field syntactically (Phase 3.5) but does not yet expose this capability bit nor enforce `allowExternalMu` in `TPM2_SignDigest` / `TPM2_VerifyDigestSignature`. Tracked under Phase 3.5+ work.
+
+---
+
+### 5.8 Key/Secret Exchange (Part 2 §11.4, Table 222, p.189)
 
 #### TPMU_ENCRYPTED_SECRET additions
 ```
@@ -534,3 +608,74 @@ authArea (session response)
 **Restriction rule (V1.85 §29.2.1; Part 1 §22.1.2):** Restricted signing keys (`TPMA_OBJECT.restricted = 1`) MUST be rejected with `TPM_RC_ATTRIBUTES + TPM_RC_H + TPM_RC_1 = 0x182`. TPM2_SignDigest accepts arbitrary pre-hashed data with no hashcheck ticket; allowing restricted keys would bypass the restriction security property. Use `TPM2_Sign` (with a `TPMT_TK_HASHCHECK` ticket) for restricted keys.
 
 **Note on TPMT_SIG_SCHEME wire encoding for NULL scheme:** When `inScheme.scheme = TPM_ALG_NULL` (0x0010), the `TPMU_SIG_SCHEME` is the `nullScheme` arm = `TPMS_EMPTY` = 0 bytes. The wire encoding is just 2 bytes (the scheme selector). The TPM then uses the key's implicit scheme (ML-DSA → TPM_ALG_MLDSA).
+
+---
+
+### 13.5 TPM2_Encapsulate (Part 3 §14.10, CC = 0x000001A7) — V1.85
+
+Performs the public-key operation in a Key Encapsulation Mechanism. The key referenced by `keyHandle` shall be a KEM key (`TPM_RC_KEY` if not), with `restricted` CLEAR and `decrypt` SET (`TPM_RC_ATTRIBUTES`). Returns a random `sharedSecret` and an accompanying `ciphertext` that can be decapsulated by the holder of the private key.
+
+If the KEM scheme includes a Key Derivation Method (KDM) step, `sharedSecret` is suitable for direct use as a cryptographic key. Otherwise it is just a shared secret value.
+
+`TPM2_Encapsulate()` was added in V1.85.
+
+Tag: `TPM_ST_SESSIONS` if an audit or encrypt session is present; otherwise `TPM_ST_NO_SESSIONS`.
+
+**Table 60: Request**
+
+```text
+tag (2)
+size (4)
+commandCode (4) = 0x000001A7
+H1: keyHandle (4)           // public KEM key; Auth Index: None
+```
+
+No parameters in the input — only the handle.
+
+**Table 61: Response — sharedSecret FIRST, ciphertext SECOND**
+
+```text
+tag (2)
+size (4)
+responseCode (4) = 0
+[paramSize (4) — only when tag = TPM_ST_SESSIONS]
+P1: sharedSecret  (TPM2B_SHARED_SECRET)   // {size(2), buffer[size]}
+P2: ciphertext    (TPM2B_KEM_CIPHERTEXT)  // {size(2), TPMU_KEM_CIPHERTEXT}
+[authArea — only when tag = TPM_ST_SESSIONS]
+```
+
+> ⚠ **Field order is part of the spec.** libtpms versions before commit `<phase-3.5+1>` had `Encapsulate_Out = { ciphertext, sharedSecret }` — that violated Table 61 and was caught by the wolfTPM v4.0.0 cross-check. Fixed by swapping struct field order, the `paramOffsets[]` reference, and the `types[]` marshal type list in `CommandDispatchData.h`.
+
+---
+
+### 13.6 TPM2_Decapsulate (Part 3 §14.11, CC = 0x000001A8) — V1.85
+
+Performs the private-key operation in a Key Encapsulation Mechanism. The key referenced by `keyHandle` shall be a KEM key (`TPM_RC_KEY`) with `restricted` CLEAR and `decrypt` SET (`TPM_RC_ATTRIBUTES`). Returns the same `sharedSecret` produced during the matching encapsulation.
+
+Uses the private key of `keyHandle`; **authorization is required** (Auth Role: USER).
+
+`TPM2_Decapsulate()` was added in V1.85.
+
+Tag: `TPM_ST_SESSIONS` (always — auth session is required).
+
+**Table 62: Request**
+
+```text
+tag (2) = 0x8002
+size (4)
+commandCode (4) = 0x000001A8
+H1: @keyHandle (4)              // loaded KEM key; Auth Index: 1, Auth Role: USER
+authArea (4 + session)
+P1: ciphertext (TPM2B_KEM_CIPHERTEXT)  // {size(2), TPMU_KEM_CIPHERTEXT}
+```
+
+**Table 63: Response**
+
+```text
+tag (2) = 0x8002
+size (4)
+responseCode (4) = 0
+paramSize (4)
+P1: sharedSecret (TPM2B_SHARED_SECRET)  // {size(2), buffer[size]}
+authArea (session response)
+```

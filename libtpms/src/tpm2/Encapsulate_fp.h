@@ -18,8 +18,11 @@ typedef struct {
 #define RC_Encapsulate_keyHandle    (TPM_RC_H + TPM_RC_1)
 
 typedef struct {
-    TPM2B_KEM_CIPHERTEXT  ciphertext;    /* OUT: encapsulation ciphertext */
-    TPM2B_SHARED_SECRET   sharedSecret;  /* OUT: 32-byte shared secret    */
+    /* V1.85 RC4 Part 3 §14.10 Table 61 — wire order is { sharedSecret, ciphertext }.
+     * Struct field order MUST match the spec wire order so the dispatcher's
+     * paramOffsets[] arithmetic walks the output buffer correctly. */
+    TPM2B_SHARED_SECRET   sharedSecret;  /* OUT 1st: 32-byte shared secret */
+    TPM2B_KEM_CIPHERTEXT  ciphertext;    /* OUT 2nd: encapsulation ciphertext */
 } Encapsulate_Out;
 
 TPM_RC

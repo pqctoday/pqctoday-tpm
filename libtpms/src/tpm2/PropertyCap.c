@@ -380,6 +380,32 @@ TPMPropertyIsDefined(
 	  case TPM_PT_MAX_CAP_BUFFER:
 	    *value = MAX_CAP_BUFFER;
 	    break;
+	  case TPM_PT_ML_PARAMETER_SETS:
+	    // V1.85 RC4 Part 2 §8.6 Table 22 + §8.7 Table 46:
+	    // TPMA_ML_PARAMETER_SET advertises which ML-KEM and ML-DSA
+	    // parameter sets the implementation supports. Compile-time
+	    // gated by ALG_MLKEM / ALG_MLDSA so disabled algorithms don't
+	    // claim support.
+	    {
+	        UINT32 mlAttrs = 0;
+#if ALG_MLKEM
+	        mlAttrs |= TPMA_ML_PARAMETER_SET_mlKem_512
+	                |  TPMA_ML_PARAMETER_SET_mlKem_768
+	                |  TPMA_ML_PARAMETER_SET_mlKem_1024;
+#endif
+#if ALG_MLDSA
+	        mlAttrs |= TPMA_ML_PARAMETER_SET_mlDsa_44
+	                |  TPMA_ML_PARAMETER_SET_mlDsa_65
+	                |  TPMA_ML_PARAMETER_SET_mlDsa_87;
+	        // Phase 3.5: TPMS_MLDSA_PARMS.allowExternalMu is wire-format
+	        // accepted (Table 229) but TPM2_SignDigest enforcement of
+	        // the flag is pending. Advertise extMu support so cross-impl
+	        // peers can negotiate; revisit when enforcement lands.
+	        mlAttrs |= TPMA_ML_PARAMETER_SET_extMu;
+#endif
+	        *value = mlAttrs;
+	    }
+	    break;
 	    // Start of variable commands
 	  case TPM_PT_PERMANENT:
 	    // TPMA_PERMANENT

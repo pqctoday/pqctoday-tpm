@@ -303,9 +303,10 @@ static uint32_t build_tpmt_public(uint8_t *buf, role_t r, alg_t a) {
         break;
     }
     case ALG_MLDSA65: {
-        /* TPMS_MLDSA_PARMS (V1.85 RC4 Table 229): { parameterSet, allowExternalMu }. */
+        /* TPMS_MLDSA_PARMS (V1.85 RC4 Table 229): { parameterSet, allowExternalMu }.
+         * allowExternalMu = YES so the IDevID role can use TPM2_SignDigest. */
         p = put_u16(p, TPM_MLDSA_65);
-        *p++ = 0;                                /* allowExternalMu = NO */
+        *p++ = 1;                                /* allowExternalMu = YES */
         /* unique: TPM2B_PUBLIC_KEY_MLDSA (empty for keygen). */
         p = put_u16(p, 0);
         break;

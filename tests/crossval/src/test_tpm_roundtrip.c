@@ -183,7 +183,7 @@ int main(void)
         p = put_u16(p, 0);                        /* authPolicy size = 0 */
         /* TPMS_MLDSA_PARMS (V1.85 RC4 Table 229): { parameterSet, allowExternalMu } */
         p = put_u16(p, TPM_MLDSA_65);
-        *p++ = 0;                                 /* allowExternalMu = NO */
+        *p++ = 1;                                 /* allowExternalMu = YES (Part 2 §12.2.3.6) */
         /* unique: TPM2B_PUBLIC_KEY_MLDSA size = 0 (TPM populates on keygen) */
         p = put_u16(p, 0);
         put_u16(pub_size_ptr, (uint16_t)(p - pub_start));

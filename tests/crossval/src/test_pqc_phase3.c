@@ -132,8 +132,9 @@ static void rm_f(const char *path) { (void)remove(path); }
  * On success (rc == 0) the transient handle is at resp[10..13].
  */
 static uint32_t
-do_create_primary(uint32_t hierarchy, uint16_t algid, uint16_t parameterset,
-                  uint32_t attrs, uint8_t *resp, uint32_t resp_max)
+do_create_primary_ext(uint32_t hierarchy, uint16_t algid, uint16_t parameterset,
+                      uint32_t attrs, uint8_t allow_external_mu,
+                      uint8_t *resp, uint32_t resp_max)
 {
     uint8_t cmd[512];
     uint8_t *p = cmd;
@@ -173,7 +174,7 @@ do_create_primary(uint32_t hierarchy, uint16_t algid, uint16_t parameterset,
     } else if (algid == (uint16_t)TPM_ALG_MLDSA) {
         /* TPMS_MLDSA_PARMS = { parameterSet, allowExternalMu }. */
         p = put_u16(p, parameterset);
-        *p++ = TPM_NO;                              /* allowExternalMu = NO (default) */
+        *p++ = allow_external_mu;                   /* per-test caller chooses */
     } else {
         /* HashML-DSA / unknown — keep simple parameterSet form for callers. */
         p = put_u16(p, parameterset);
@@ -191,6 +192,17 @@ do_create_primary(uint32_t hierarchy, uint16_t algid, uint16_t parameterset,
     if (send_command(cmd, len, resp, &resp_len) != 0)
         return 0xFFFFFFFFu;
     return response_rc(resp, resp_len);
+}
+
+/* Convenience: default ML-DSA keys to allowExternalMu=YES so they're usable
+ * with TPM2_SignDigest / TPM2_VerifyDigestSignature (Part 2 §12.2.3.6 gate).
+ * For ML-KEM the byte is ignored; for HashML-DSA it has no field, also ignored. */
+static uint32_t
+do_create_primary(uint32_t hierarchy, uint16_t algid, uint16_t parameterset,
+                  uint32_t attrs, uint8_t *resp, uint32_t resp_max)
+{
+    return do_create_primary_ext(hierarchy, algid, parameterset, attrs,
+                                 TPM_YES, resp, resp_max);
 }
 
 /* ── main ────────────────────────────────────────────────────────────────── */
@@ -582,6 +594,72 @@ int main(void)
             }
             PASS("SignDigest(ML-DSA-65 unrestricted): sigAlg=MLDSA, sig=%u B — FIPS 204", sig_sz);
         }
+    }
+
+    /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     * Test 6 — V1.85 Part 2 §12.2.3.6 Table 229: allowExternalMu = NO gate
+     *
+     * Create an unrestricted ML-DSA-65 key with allowExternalMu = NO and
+     * verify TPM2_SignDigest rejects it with TPM_RC_ATTRIBUTES. Per spec:
+     * "If YES, this key can be used with TPM2_VerifyDigestSignature() and
+     * TPM2_SignDigest()." → NO must be rejected.
+     * ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+    {
+        /* Tests 1, 2, 5a have used up our 3-slot transient object pool.
+         * Flush the EK before creating the 4th primary to avoid TPM_RC_OBJECT_MEMORY. */
+        {
+            uint8_t cmd[14]; uint8_t *p = cmd;
+            p = put_u16(p, (uint16_t)TPM_ST_NO_SESSIONS);
+            p = put_u32(p, 14);
+            p = put_u32(p, 0x00000165u);   /* TPM_CC_FlushContext */
+            p = put_u32(p, ekHandle);
+            resp_len = sizeof(resp);
+            send_command(cmd, 14, resp, &resp_len);
+        }
+
+        uint32_t attrs = TPMA_FIXEDTPM | TPMA_FIXEDPARENT | TPMA_SENSITIVEDATA
+                       | TPMA_USERWITHAUTH | TPMA_SIGN;          /* unrestricted */
+        uint32_t rc = do_create_primary_ext(TPM_RH_OWNER, (uint16_t)TPM_ALG_MLDSA,
+                                            (uint16_t)TPM_MLDSA_65, attrs,
+                                            TPM_NO,              /* allowExternalMu = NO */
+                                            resp, sizeof(resp));
+        if (rc != 0) {
+            FAIL("CreatePrimary(ML-DSA-65 allowExternalMu=NO) rc=0x%08x", rc);
+            goto done;
+        }
+        uint32_t noMuHandle = get_u32(resp + 10);
+
+        /* Now try TPM2_SignDigest — must fail with TPM_RC_ATTRIBUTES */
+        static const uint8_t digest[32] = {
+            0xDE,0xAD,0xBE,0xEF, 0xDE,0xAD,0xBE,0xEF,
+            0xDE,0xAD,0xBE,0xEF, 0xDE,0xAD,0xBE,0xEF,
+            0xDE,0xAD,0xBE,0xEF, 0xDE,0xAD,0xBE,0xEF,
+            0xDE,0xAD,0xBE,0xEF, 0xDE,0xAD,0xBE,0xEF,
+        };
+        uint8_t cmd[256]; uint8_t *p = cmd;
+        p = put_u16(p, (uint16_t)TPM_ST_SESSIONS);
+        p = put_u32(p, 0);
+        p = put_u32(p, TPM_CC_SignDigest);
+        p = put_u32(p, noMuHandle);
+        p = put_u32(p, 9);
+        p = put_u32(p, TPM_RS_PW); p = put_u16(p, 0); *p++ = 0; p = put_u16(p, 0);
+        p = put_u16(p, (uint16_t)TPM_ALG_NULL);
+        p = put_u16(p, 32); memcpy(p, digest, 32); p += 32;
+        p = put_u16(p, 0); p = put_u16(p, 0);
+        uint32_t len = (uint32_t)(p - cmd);
+        put_u32(cmd + 2, len);
+        resp_len = sizeof(resp);
+        send_command(cmd, len, resp, &resp_len);
+        uint32_t sd_rc = response_rc(resp, resp_len);
+        if (sd_rc == 0) {
+            FAIL("SignDigest(allowExternalMu=NO): expected TPM_RC_ATTRIBUTES, got SUCCESS");
+            goto done;
+        }
+        if ((sd_rc & 0x0ffu) != RC_ATTRIBUTES) {
+            FAIL("SignDigest(allowExternalMu=NO): expected ATTRIBUTES (0x082), got rc=0x%08x", sd_rc);
+            goto done;
+        }
+        PASS("SignDigest(ML-DSA-65 allowExternalMu=NO) → ATTRIBUTES (0x%08x) — Table 229 gate enforced", sd_rc);
     }
 
 done:

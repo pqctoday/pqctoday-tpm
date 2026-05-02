@@ -58,6 +58,15 @@ TPM2_SignDigest(SignDigest_In *in, SignDigest_Out *out)
     if(IS_ATTRIBUTE(signObject->publicArea.objectAttributes, TPMA_OBJECT, restricted))
         return TPM_RCS_ATTRIBUTES + RC_SignDigest_keyHandle;
 
+    /* V1.85 RC4 Part 2 §12.2.3.6 Table 229: TPMS_MLDSA_PARMS.allowExternalMu
+     * gates SignDigest / VerifyDigestSignature for ML-DSA keys. When NO, the
+     * digest field would be interpreted as the external Mu (μ) per FIPS 204 —
+     * which the key was not provisioned to accept, so the TPM MUST refuse.
+     * HashML-DSA keys are not gated by this flag (Table 230 has no allowExternalMu). */
+    if(signObject->publicArea.type == TPM_ALG_MLDSA
+       && signObject->publicArea.parameters.mldsaDetail.allowExternalMu != YES)
+        return TPM_RCS_ATTRIBUTES + RC_SignDigest_keyHandle;
+
     if(!CryptSelectSignScheme(signObject, &in->inScheme))
         return TPM_RCS_SCHEME + RC_SignDigest_inScheme;
 
@@ -96,6 +105,13 @@ TPM2_VerifyDigestSignature(VerifyDigestSignature_In  *in,
     OBJECT *signObject = HandleToObject(in->keyHandle);
 
     if(!IS_ATTRIBUTE(signObject->publicArea.objectAttributes, TPMA_OBJECT, sign))
+        return TPM_RCS_ATTRIBUTES + RC_VerifyDigestSignature_keyHandle;
+
+    /* V1.85 RC4 Part 2 §12.2.3.6 Table 229: TPMS_MLDSA_PARMS.allowExternalMu
+     * gate (see TPM2_SignDigest above for full rationale). HashML-DSA keys are
+     * not gated by this flag. */
+    if(signObject->publicArea.type == TPM_ALG_MLDSA
+       && signObject->publicArea.parameters.mldsaDetail.allowExternalMu != YES)
         return TPM_RCS_ATTRIBUTES + RC_VerifyDigestSignature_keyHandle;
 
     result = CryptMlDsaValidateSignature(

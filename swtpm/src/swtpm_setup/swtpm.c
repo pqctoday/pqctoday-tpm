@@ -1277,10 +1277,15 @@ static int swtpm_tpm2_createprimary_ak_mldsa65(struct swtpm *self, uint32_t *cur
     unsigned int keyflags = 0x000500f2;
     const unsigned char authpolicy[0] = {};
     /* TPMS_MLDSA_PARMS (V1.85 RC4 Table 229): { parameterSet, allowExternalMu }.
-     *   parameterSet(2) + allowExternalMu(1) = 3 bytes total. */
+     *   parameterSet(2) + allowExternalMu(1) = 3 bytes total.
+     * allowExternalMu = YES so attestation flows that use TPM2_SignDigest
+     * over a pre-computed digest (per V1.85 §29.2.1) are accepted. The
+     * Phase 3 AK is also `restricted` so SignDigest will still be rejected
+     * by the restriction gate — but unrestricted derived AKs (e.g. IDevID)
+     * provisioned from this template will work. */
     const unsigned char parms[] = {
         AS2BE(TPM2_MLDSA_65),
-        0x00,  /* allowExternalMu = NO */
+        0x01,  /* allowExternalMu = YES */
     };
     size_t off = 30 + sizeof(parms);
 

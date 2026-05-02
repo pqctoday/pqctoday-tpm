@@ -473,6 +473,24 @@ grep -q "mldsaScheme" "$CRYPTUTIL"           && pass "CryptSelectSignScheme: syn
 grep -q "TPMA_OBJECT.*restricted" "$PQCMLDSA" && pass "TPM2_SignDigest: restricted-key guard present (§29.2.1)" \
                                                || fail "TPM2_SignDigest: restricted-key guard missing"
 
+# V1.85 §12.2.3.6 Table 229: TPMS_MLDSA_PARMS.allowExternalMu must be enforced
+# in TPM2_SignDigest and TPM2_VerifyDigestSignature.
+grep -q "allowExternalMu" "$PQCMLDSA" && pass "TPMS_MLDSA_PARMS.allowExternalMu enforced (§12.2.3.6 Table 229)" \
+                                       || fail "allowExternalMu enforcement missing in PqcMlDsaCommands.c"
+
+# V1.85 §8.6 Table 22: TPM_PT_ML_PARAMETER_SETS GetCapability must be wired
+grep -q "TPM_PT_ML_PARAMETER_SETS" "libtpms/src/tpm2/PropertyCap.c" \
+    && pass "TPM_PT_ML_PARAMETER_SETS capability handler present (Table 22 + Table 46)" \
+    || fail "TPM_PT_ML_PARAMETER_SETS capability handler missing in PropertyCap.c"
+
+# V1.85 §12.2.3.6/8: TPMS_MLDSA_PARMS / TPMS_MLKEM_PARMS spec field layout
+grep -q "TPMI_YES_NO\s*allowExternalMu" "libtpms/src/tpm2/TpmTypes.h" \
+    && pass "TPMS_MLDSA_PARMS.allowExternalMu field present (Table 229)" \
+    || fail "TPMS_MLDSA_PARMS missing allowExternalMu field"
+grep -q "TPMT_SYM_DEF_OBJECT\s*symmetric" "libtpms/src/tpm2/TpmTypes.h" \
+    && pass "TPMS_MLKEM_PARMS.symmetric field present (Table 231)" \
+    || fail "TPMS_MLKEM_PARMS missing symmetric field"
+
 # Phase 3 — Runtime roundtrip (test_pqc_phase3)
 section "Phase 3 — Runtime Roundtrip (test_pqc_phase3)"
 

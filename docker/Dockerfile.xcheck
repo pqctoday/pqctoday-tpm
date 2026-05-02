@@ -1,0 +1,90 @@
+# syntax=docker/dockerfile:1.6
+#
+# pqctoday-tpm — runtime cross-check container.
+#
+# Extends the dev image with a pinned wolfSSL + wolfTPM build so that
+# `make wolftpm-xcheck` can run wolfTPM's PQC examples against our
+# swtpm/libtpms over the socket — true cross-implementation runtime
+# validation against the V1.85 RC4 spec.
+#
+# Independent crypto stacks: our libtpms is OpenSSL 3.6.2; wolfTPM is
+# wolfCrypt. Any wire-format divergence shows up here.
+#
+# Build:
+#   make docker-xcheck      (builds pqctoday-tpm-dev first if needed)
+# Run:
+#   make wolftpm-xcheck     (starts swtpm + runs assertion suite)
+#
+# Pin overrides (use when bumping upstream):
+#   docker build -f docker/Dockerfile.xcheck \
+#       --build-arg WOLFSSL_REF=<sha> \
+#       --build-arg WOLFTPM_REF=<sha> \
+#       -t pqctoday-tpm-xcheck .
+#
+
+FROM pqctoday-tpm-dev
+
+# wolfSSL HEAD when we first ran the cross-check (post-PR #10051).
+# Bump deliberately when refreshing.
+ARG WOLFSSL_REF=7b53303
+
+# wolfTPM v4.0.0 — merge commit of PR #445 (V1.85 PQC support).
+ARG WOLFTPM_REF=fbbf6fe
+
+WORKDIR /opt/build
+
+# ── wolfSSL 5.9.x with PQC ───────────────────────────────────────────────
+#
+# --enable-experimental + --enable-dilithium + --enable-mlkem expose ML-DSA
+# and ML-KEM via the wc_dilithium_* / wc_MlKemKey_* APIs.
+# CFLAGS:
+#   -fPIC: required because wolfTPM links wolfSSL into a shared lib.
+#   -DWC_RSA_NO_PADDING: wolfTPM requires it for raw RSA operations.
+RUN git clone --depth=200 https://github.com/wolfSSL/wolfssl /opt/build/wolfssl \
+    && cd /opt/build/wolfssl \
+    && git checkout ${WOLFSSL_REF} \
+    && ./autogen.sh \
+    && ./configure \
+        --prefix=/opt/wolfssl \
+        --enable-experimental \
+        --enable-dilithium \
+        --enable-mlkem \
+        --enable-aescfb \
+        --enable-cmac \
+        --enable-keygen \
+        --enable-rsapss \
+        --disable-shared \
+        --enable-static \
+        CFLAGS="-fPIC -DWC_RSA_NO_PADDING" \
+    && make -j"$(nproc)" \
+    && make install \
+    && cd / \
+    && rm -rf /opt/build/wolfssl
+
+# Workaround: wolfTPM's configure.ac includes <wolfssl/wolfcrypt/mlkem.h>
+# but wolfSSL HEAD ships only wc_mlkem.h. File upstream — until then,
+# this symlink unblocks the AC_CHECK_DECL probe.
+RUN ln -sf wc_mlkem.h /opt/wolfssl/include/wolfssl/wolfcrypt/mlkem.h
+
+# ── wolfTPM v4.0.0 with --enable-pqc + --enable-swtpm ────────────────────
+#
+# --enable-pqc:    enables WOLFTPM_V185 → wolfTPM2_GetKeyTemplate_MLDSA /
+#                  MLKEM helpers, examples/pqc/* binaries.
+# --enable-swtpm:  socket transport (default port 2321/2322), the channel
+#                  we use to point wolfTPM at our libtpms-backed swtpm.
+RUN git clone --depth=200 https://github.com/wolfSSL/wolfTPM /opt/build/wolftpm \
+    && cd /opt/build/wolftpm \
+    && git checkout ${WOLFTPM_REF} \
+    && ./autogen.sh \
+    && ./configure \
+        --prefix=/opt/wolftpm \
+        --with-wolfcrypt=/opt/wolfssl \
+        --enable-pqc \
+        --enable-swtpm \
+    && make -j"$(nproc)"
+
+# Keep wolfTPM examples in /opt/build/wolftpm so the runtime script can
+# invoke them; they're tiny binaries (≈6 KB each) statically linked.
+
+WORKDIR /workspace
+CMD ["/bin/bash"]

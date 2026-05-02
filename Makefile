@@ -3,20 +3,41 @@
 # The real build systems are autotools (libtpms, swtpm) and CMake (cross-val
 # harness, future WASM). This Makefile wraps common developer-facing targets.
 
-.PHONY: help crossval crossval-build crossval-run crossval-softhsm compliance compliance-softhsm docker-dev clean
+.PHONY: help crossval crossval-build crossval-run crossval-softhsm compliance compliance-softhsm docker-dev docker-xcheck wolftpm-xcheck clean
 
 help:
 	@echo "pqctoday-tpm — developer targets"
 	@echo
 	@echo "  make docker-dev     Build the pqctoday-tpm-dev Docker image"
+	@echo "  make docker-xcheck  Build the pqctoday-tpm-xcheck image (wolfSSL + wolfTPM PQC)"
 	@echo "  make compliance     Run the TCG V1.85 PQC compliance test suite"
 	@echo "  make crossval       Run the PQC cross-validation harness in Docker"
 	@echo "  make crossval-build Build the harness without running it"
+	@echo "  make wolftpm-xcheck Runtime cross-check: wolfTPM PR #445 ↔ pqctoday-tpm"
 	@echo "  make clean          Clean build artifacts under tests/crossval/build"
 	@echo
 
 docker-dev:
 	docker build -f docker/Dockerfile.dev -t pqctoday-tpm-dev .
+
+# Cross-check image: dev + pinned wolfSSL (PQC) + pinned wolfTPM (--enable-pqc).
+# Pins: WOLFSSL_REF + WOLFTPM_REF defaults baked into the Dockerfile; override
+# on the command line when bumping upstream:
+#   make docker-xcheck WOLFSSL_REF=<sha> WOLFTPM_REF=<sha>
+WOLFSSL_REF ?=
+WOLFTPM_REF ?=
+docker-xcheck: docker-dev
+	docker build -f docker/Dockerfile.xcheck \
+	    $(if $(WOLFSSL_REF),--build-arg WOLFSSL_REF=$(WOLFSSL_REF),) \
+	    $(if $(WOLFTPM_REF),--build-arg WOLFTPM_REF=$(WOLFTPM_REF),) \
+	    -t pqctoday-tpm-xcheck .
+
+# Runtime cross-check: drives wolfTPM's PQC clients against our libtpms+swtpm,
+# asserts FIPS 203/204 sizes and Round-trip OK on Encap/Decap. Phase 4 sequence
+# commands are documented as expected-stub until they land.
+wolftpm-xcheck: docker-xcheck
+	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-xcheck \
+	    bash tests/compliance/run_wolftpm_runtime_xcheck.sh
 
 crossval-build:
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \

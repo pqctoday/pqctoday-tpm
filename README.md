@@ -231,10 +231,13 @@ make compliance
 
 | Target | What runs | Expected |
 | --- | --- | --- |
-| `make crossval` | OpenSSL EVP round-trips (ML-DSA-{44,65,87}, ML-KEM-{512,768,1024}), 75 NIST ACVP ML-DSA keyGen KATs, `TPM2_CreatePrimary(MLDSA-65)` end-to-end | 17/17 pass |
-| `make crossval-softhsm` | All of above + softhsmv3 C++ cross-verify (sign↔verify, encap↔decap) | 17/17 pass |
-| `make compliance` | 85-check TCG V1.85 compliance suite | 85 PASS / 0 FAIL |
+| `make crossval` | OpenSSL EVP round-trips (ML-DSA-{44,65,87}, ML-KEM-{512,768,1024}), 75 NIST ACVP ML-DSA keyGen KATs, `TPM2_CreatePrimary(MLDSA-65)` end-to-end + `test_pqc_phase3` | 7 + 4 + 11 pass |
+| `make crossval-softhsm` | All of above + softhsmv3 C++ cross-verify (sign↔verify, encap↔decap) | all pass |
+| `make compliance` | 96-check TCG V1.85 RC4 compliance suite | **96 PASS / 0 FAIL / 0 SKIP** |
+| `make wolftpm-xcheck` | **Cross-implementation runtime check.** Drives wolfTPM v4.0.0 PR #445 (wolfCrypt backend) against our libtpms (OpenSSL 3.6.2) over swtpm socket — asserts FIPS 203/204 byte sizes for ML-KEM-{512,768,1024} Encap/Decap roundtrips and ML-DSA-{44,65,87} CreatePrimary | **23/23 pass** |
 | `libtpms make check` | Upstream libtpms unit tests | 10/10 pass |
+
+`make wolftpm-xcheck` is the strongest spec-conformance test we have — two completely independent V1.85 implementations agreeing on the byte-on-the-wire layout. Setup is one-shot: `make docker-xcheck` builds an image with pinned wolfSSL + wolfTPM (≈4 min); subsequent `make wolftpm-xcheck` runs in seconds.
 
 > **macOS note:** The cross-val binaries are Linux ELF and run inside Docker. The compliance
 > script auto-detects Homebrew OpenSSL 3.6 (`/opt/homebrew/opt/openssl@3.6/bin/openssl`) on

@@ -165,6 +165,18 @@ static const struct {
     [TPM_ALG_CBC] = ENCRYPTING(ALG_CBC, "cbc", true, 1),
     [TPM_ALG_CFB] = ENCRYPTING(ALG_CFB, "cfb", false, 1), // never disable: context entryption
     [TPM_ALG_ECB] = ENCRYPTING(ALG_ECB, "ecb", true, 1),
+    /* V1.85 PQC asymmetric algorithms — TPM_ALG_MLKEM/MLDSA/HASH_MLDSA. These
+     * use OTHER (no key-size table) because the parameter set is encoded in
+     * TPMS_{MLDSA,MLKEM}_PARMS rather than as a numeric key-bit count. */
+#if ALG_MLKEM
+    [TPM_ALG_MLKEM] = OTHER(ALG_MLKEM, "mlkem", true, 1),
+#endif
+#if ALG_MLDSA
+    [TPM_ALG_MLDSA] = OTHER(ALG_MLDSA, "mldsa", true, 1),
+#endif
+#if ALG_HASH_MLDSA
+    [TPM_ALG_HASH_MLDSA] = OTHER(ALG_HASH_MLDSA, "hash-mldsa", true, 1),
+#endif
     /* all newly added algorithms must have .canBedisable=true so they can be disabled */
 };
 

@@ -181,8 +181,9 @@ int main(void)
                         TPMA_OBJECT_SENSITIVEDATAORIGIN |
                         TPMA_OBJECT_USERWITHAUTH | TPMA_OBJECT_SIGN);
         p = put_u16(p, 0);                        /* authPolicy size = 0 */
-        /* TPMS_MLDSA_PARMS: one UINT16 parameterSet */
+        /* TPMS_MLDSA_PARMS (V1.85 RC4 Table 229): { parameterSet, allowExternalMu } */
         p = put_u16(p, TPM_MLDSA_65);
+        *p++ = 0;                                 /* allowExternalMu = NO */
         /* unique: TPM2B_PUBLIC_KEY_MLDSA size = 0 (TPM populates on keygen) */
         p = put_u16(p, 0);
         put_u16(pub_size_ptr, (uint16_t)(p - pub_start));
@@ -216,7 +217,9 @@ int main(void)
         q += 2;                              /* nameAlg */
         q += 4;                              /* objectAttributes */
         uint16_t auth_pol_sz = get_u16(q); q += 2 + auth_pol_sz;
-        uint16_t ps = get_u16(q); q += 2;   /* TPMS_MLDSA_PARMS.parameterSet */
+        /* TPMS_MLDSA_PARMS = { parameterSet(2), allowExternalMu(1) } = 3 B */
+        uint16_t ps = get_u16(q); q += 2;
+        q += 1;                              /* allowExternalMu byte */
         uint16_t pk_sz = get_u16(q);        /* unique.size */
         (void)pub_start_r;
 

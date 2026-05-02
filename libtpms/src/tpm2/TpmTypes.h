@@ -2344,21 +2344,30 @@ typedef struct {
     TPMT_KDF_SCHEME         kdf;
 } TPMS_ECC_PARMS;
 
-/* Post-quantum parameter structures — TCG V1.85 RC4 Part 2 Tables 228-229. */
+/* Post-quantum parameter structures — TCG V1.85 RC4 Part 2 Tables 229-231.
+ * Field order matches the spec exactly so the wire format is interoperable
+ * with peer V1.85 implementations (e.g. wolfTPM v4.0.0). */
 #if ALG_MLDSA
 typedef struct {
-    TPMI_MLDSA_PARAMETER_SET    parameterSet;  /* TPM_MLDSA_{44,65,87} */
+    TPMI_MLDSA_PARAMETER_SET    parameterSet;     /* TPM_MLDSA_{44,65,87} */
+    TPMI_YES_NO                 allowExternalMu;  /* §12.2.3.6: when YES, key is
+                                                   * usable with TPM2_SignDigest /
+                                                   * TPM2_VerifyDigestSignature */
 } TPMS_MLDSA_PARMS;
 #endif
 #if ALG_HASH_MLDSA
 typedef struct {
     TPMI_MLDSA_PARAMETER_SET    parameterSet;
-    TPMI_ALG_HASH               hashAlg;       /* pre-hash used in HashML-DSA */
+    TPMI_ALG_HASH               hashAlg;          /* pre-hash used in HashML-DSA */
 } TPMS_HASH_MLDSA_PARMS;
 #endif
 #if ALG_MLKEM
 typedef struct {
-    TPMI_MLKEM_PARAMETER_SET    parameterSet;  /* TPM_MLKEM_{512,768,1024} */
+    TPMT_SYM_DEF_OBJECT         symmetric;        /* §12.2.3.8: for restricted
+                                                   * decryption keys, an AES/CAMELLIA
+                                                   * algorithm + key-size + mode;
+                                                   * otherwise TPM_ALG_NULL */
+    TPMI_MLKEM_PARAMETER_SET    parameterSet;     /* TPM_MLKEM_{512,768,1024} */
 } TPMS_MLKEM_PARMS;
 #endif
 

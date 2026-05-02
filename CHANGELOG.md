@@ -4,7 +4,59 @@ All notable changes to pqctoday-tpm are documented here.
 
 ---
 
-## [Unreleased] — Phase 0 + Phase 2 + Phase 3
+## [Unreleased] — Phase 0 + Phase 2 + Phase 3 + Phase 3.5
+
+### Phase 3.5 — V1.85 RC4 wire-format conformance for PQC parameter blocks
+
+Surfaced by runtime cross-check with wolfTPM v4.0.0 (PR #445) over swtpm socket. CreatePrimary calls from wolfTPM client failed at `inPublic` parsing (parameter index 2):
+
+- `mldsa_sign` → `TPM_RC_SIZE` (extra byte in `TPMS_MLDSA_PARMS`)
+- `mlkem_encap` → `TPM_RC_VALUE` (unexpected symmetric-algorithm prefix)
+
+Diagnosis vs `docs/standards/TPM-2.0-Library-Part-2_Structures-V185-RC4.pdf` Tables 229 & 231:
+
+- `TPMS_MLDSA_PARMS` spec layout = `{ parameterSet, allowExternalMu (TPMI_YES_NO) }`. libtpms had only `parameterSet`; the `allowExternalMu` byte selects whether the key is usable with `TPM2_SignDigest` / `TPM2_VerifyDigestSignature` (§12.2.3.6).
+- `TPMS_MLKEM_PARMS` spec layout = `{ symmetric (TPMT_SYM_DEF_OBJECT+), parameterSet }`. libtpms had only `parameterSet`; the `symmetric` field is mandatory for restricted decryption keys per §12.2.3.8 (e.g. ML-KEM EK uses AES-128-CFB).
+
+**`libtpms/src/tpm2/TpmTypes.h`**
+
+- Added `TPMI_YES_NO allowExternalMu` to `TPMS_MLDSA_PARMS`.
+- Added `TPMT_SYM_DEF_OBJECT symmetric` as the **first** field of `TPMS_MLKEM_PARMS`, then `parameterSet`.
+
+**`libtpms/src/tpm2/Marshal.c` + `Unmarshal.c`**
+
+- `TPMS_MLDSA_PARMS_Marshal` / `_Unmarshal`: emit/parse `parameterSet (UINT16)` then `allowExternalMu (BYTE)`. Unmarshaller validates `allowExternalMu ∈ {NO, YES}` per Part 2 Table 39.
+- `TPMS_MLKEM_PARMS_Marshal` / `_Unmarshal`: emit/parse `symmetric (TPMT_SYM_DEF_OBJECT)` first (allowNull = YES so unrestricted keys can pass `TPM_ALG_NULL`), then `parameterSet`.
+
+**Hand-built PQC templates updated to match new spec layout**
+
+- `tests/crossval/src/test_pqc_phase3.c` — `do_create_primary` switches on `algid`; restricted ML-KEM-EK template now emits AES-128-CFB symmetric block; ML-DSA template emits `allowExternalMu=NO`. Response parsers updated for new parm-block sizes (ML-KEM-EK 8 B, ML-DSA-AK 3 B).
+- `tests/crossval/src/test_tpm_roundtrip.c` — ML-DSA template adds `allowExternalMu=NO` byte; response parser advances 1 extra byte.
+- `tests/crossval/src/tpm_bench.c` — ML-KEM EK/SRK gets restricted-decrypt symmetric (AES-128-CFB); ML-DSA gets `allowExternalMu=NO`.
+- `swtpm/src/swtpm_setup/swtpm.c` — `swtpm_tpm2_createprimary_pqc` refactored to take `(parms, parms_len)` instead of just `parameterSet`. ML-KEM-768 EK builder emits 8-byte parms (AES-128-CFB + parameterSet); ML-DSA-65 AK builder emits 3-byte parms (parameterSet + allowExternalMu=NO).
+
+**Verification (Docker dev container, `make compliance` + `make crossval`)**
+
+- Compliance: **92 passed, 0 failed, 0 skipped** (no regression).
+- Crossval: 10/10 Phase 3 subtests still green; FIPS-canonical sizes (ML-DSA-65 sig 3309 B, ML-KEM-768 ct 1088 B) preserved.
+
+**End-to-end wolfTPM cross-check** (wolfSSL 5.9.1 `--enable-experimental --enable-dilithium --enable-mlkem` → wolfTPM PR #445 `--enable-pqc --enable-swtpm` → swtpm socket → our libtpms):
+
+```
+mldsa_sign  -mldsa=44 → Created ML-DSA primary: handle 0x80000000, pubkey 1312 bytes ✓
+mldsa_sign  -mldsa=65 → Created ML-DSA primary: handle 0x80000000, pubkey 1952 bytes ✓
+mldsa_sign  -mldsa=87 → Created ML-DSA primary: handle 0x80000000, pubkey 2592 bytes ✓
+mlkem_encap -mlkem=512  → Created ML-KEM primary: pubkey 800 bytes  ✓
+mlkem_encap -mlkem=768  → Created ML-KEM primary: pubkey 1184 bytes ✓
+mlkem_encap -mlkem=1024 → Created ML-KEM primary: pubkey 1568 bytes ✓
+```
+
+All six PQC parameter sets succeed at `TPM2_CreatePrimary` cross-implementation. Bilateral wire-format conformance with wolfTPM (independent crypto stack: wolfCrypt vs OpenSSL 3.6.2) achieved on `TPMT_PUBLIC` for the full V1.85 PQC algorithm matrix.
+
+Out-of-scope failures (deferred to Phase 4):
+
+- `SignSequenceStart 0x143 = TPM_RC_COMMAND_CODE` — sequence commands not implemented in libtpms; `MLDSA_SEQUENCE_OBJECT` + dispatch handlers are Phase 4 work.
+- wolfTPM client reports `Encapsulate: ciphertext 32 bytes, shared secret 64 bytes` (incorrect — should be 768/1088/1568 B and 32 B) → likely wolfTPM `TPM2_Encapsulate` response-parsing bug; needs upstream investigation.
 
 ### Phase 3 — Runtime Plumbing & PQC EK X.509 Certs (Steps 1–5)
 

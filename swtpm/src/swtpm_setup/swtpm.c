@@ -1127,19 +1127,21 @@ err_too_short:
 
 /* Create a PQC (ML-KEM or ML-DSA) primary key — V1.85 §29.
  *
- * Both ML-KEM and ML-DSA use a single-field TPMS_*_PARMS { parameterSet }
- * with no symmetric or scheme sub-fields, making the serialized template
- * much simpler than RSA/ECC:
+ * The serialized template is:
  *   type(2) + nameAlg(2) + attrs(4) + authPolicy.size(2) + authPolicy +
- *   parameterSet(2) + unique.size(2)=0
+ *   parms[parms_len] + unique.size(2)=0
  *
- * With empty authpolicy the response unique.size is at byte offset 32.
+ * The caller supplies the spec-canonical parms blob because TPMS_MLKEM_PARMS
+ * and TPMS_MLDSA_PARMS have different layouts (V1.85 RC4 Tables 229 & 231).
+ *
+ * The response unique.size is at offset 30 + parms_len when authPolicy is empty.
  */
 static int swtpm_tpm2_createprimary_pqc(struct swtpm *self, uint32_t primaryhandle,
                                         uint16_t algid, uint16_t hashalg,
                                         unsigned int keyflags,
                                         const unsigned char *authpolicy, size_t authpolicy_len,
-                                        uint16_t parameterset, uint16_t exp_pksize,
+                                        const unsigned char *parms, size_t parms_len,
+                                        uint16_t exp_pksize,
                                         size_t off, uint32_t *curr_handle,
                                         unsigned char *ektemplate, size_t *ektemplate_len,
                                         gchar **ekparam, const gchar **key_description)
@@ -1161,7 +1163,7 @@ static int swtpm_tpm2_createprimary_pqc(struct swtpm *self, uint32_t primaryhand
                       AS2BE(algid), AS2BE(hashalg), AS4BE(keyflags), AS2BE(authpolicy_len)
                   }, (size_t)10,
                   authpolicy, authpolicy_len,
-                  (unsigned char[]){ AS2BE(parameterset) }, (size_t)2,
+                  parms, parms_len,
                   (unsigned char[]){ AS2BE(0) }, (size_t)2,
                   NULL);
     if (public_len < 0) {
@@ -1237,9 +1239,20 @@ static int swtpm_tpm2_createprimary_ek_mlkem768(struct swtpm *self, uint32_t *cu
      *           noDA, restricted, decrypt — matches ECC EK restricted+decrypt profile */
     unsigned int keyflags = 0x000300f2;
     const unsigned char authpolicy[0] = {};
-    /* off=32: 10(hdr)+4(handle)+4(paramSize)+2(outPublic.size)+2(type)+2(nameAlg)+
-     *         4(attrs)+2(authPolicy.size=0)+2(parameterSet) */
-    size_t off = 32;
+    /* TPMS_MLKEM_PARMS (V1.85 RC4 Table 231): { symmetric, parameterSet }.
+     * Restricted decrypt EK requires a real symmetric algorithm — use
+     * AES-128-CFB to match the RSA/ECC EK convention.
+     *   sym.algorithm=AES(2) + sym.keyBits.aes=128(2) + sym.mode.aes=CFB(2) +
+     *   parameterSet(2) = 8 bytes total. */
+    const unsigned char parms[] = {
+        AS2BE(TPM2_ALG_AES),
+        AS2BE(128),
+        AS2BE(TPM2_ALG_CFB),
+        AS2BE(TPM2_MLKEM_768),
+    };
+    /* off = 10(hdr)+4(handle)+4(paramSize)+2(outPublic.size)+2(type)+2(nameAlg)+
+     *       4(attrs)+2(authPolicy.size=0)+8(parms) = 38 */
+    size_t off = 30 + sizeof(parms);
 
     if (key_description)
         *key_description = "mlkem768";
@@ -1248,7 +1261,8 @@ static int swtpm_tpm2_createprimary_ek_mlkem768(struct swtpm *self, uint32_t *cu
                                         TPM2_ALG_MLKEM, TPM2_ALG_SHA256,
                                         keyflags,
                                         authpolicy, sizeof(authpolicy),
-                                        TPM2_MLKEM_768, 1184,
+                                        parms, sizeof(parms),
+                                        1184,
                                         off, curr_handle,
                                         ektemplate, ektemplate_len, ekparam, key_description);
 }
@@ -1262,7 +1276,13 @@ static int swtpm_tpm2_createprimary_ak_mldsa65(struct swtpm *self, uint32_t *cur
      *           noDA, restricted, sign */
     unsigned int keyflags = 0x000500f2;
     const unsigned char authpolicy[0] = {};
-    size_t off = 32;
+    /* TPMS_MLDSA_PARMS (V1.85 RC4 Table 229): { parameterSet, allowExternalMu }.
+     *   parameterSet(2) + allowExternalMu(1) = 3 bytes total. */
+    const unsigned char parms[] = {
+        AS2BE(TPM2_MLDSA_65),
+        0x00,  /* allowExternalMu = NO */
+    };
+    size_t off = 30 + sizeof(parms);
 
     if (key_description)
         *key_description = "mldsa65";
@@ -1271,7 +1291,8 @@ static int swtpm_tpm2_createprimary_ak_mldsa65(struct swtpm *self, uint32_t *cur
                                         TPM2_ALG_MLDSA, TPM2_ALG_SHA256,
                                         keyflags,
                                         authpolicy, sizeof(authpolicy),
-                                        TPM2_MLDSA_65, 1952,
+                                        parms, sizeof(parms),
+                                        1952,
                                         off, curr_handle,
                                         ektemplate, ektemplate_len, ekparam, key_description);
 }

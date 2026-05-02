@@ -1754,7 +1754,11 @@ TPMI_MLDSA_PARAMETER_SET_Marshal(TPMI_MLDSA_PARAMETER_SET *source, BYTE **buffer
 UINT16
 TPMS_MLDSA_PARMS_Marshal(TPMS_MLDSA_PARMS *source, BYTE **buffer, INT32 *size)
 {
-    return TPMI_MLDSA_PARAMETER_SET_Marshal(&source->parameterSet, buffer, size);
+    /* V1.85 RC4 Part 2 Table 229: { parameterSet, allowExternalMu } */
+    UINT16 written = 0;
+    written += TPMI_MLDSA_PARAMETER_SET_Marshal(&source->parameterSet, buffer, size);
+    written += TPMI_YES_NO_Marshal(&source->allowExternalMu, buffer, size);
+    return written;
 }
 
 UINT16
@@ -1791,7 +1795,11 @@ TPMI_MLKEM_PARAMETER_SET_Marshal(TPMI_MLKEM_PARAMETER_SET *source, BYTE **buffer
 UINT16
 TPMS_MLKEM_PARMS_Marshal(TPMS_MLKEM_PARMS *source, BYTE **buffer, INT32 *size)
 {
-    return TPMI_MLKEM_PARAMETER_SET_Marshal(&source->parameterSet, buffer, size);
+    /* V1.85 RC4 Part 2 Table 231: { symmetric, parameterSet } */
+    UINT16 written = 0;
+    written += TPMT_SYM_DEF_OBJECT_Marshal(&source->symmetric, buffer, size);
+    written += TPMI_MLKEM_PARAMETER_SET_Marshal(&source->parameterSet, buffer, size);
+    return written;
 }
 #endif /* ALG_MLKEM */
 

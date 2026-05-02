@@ -303,14 +303,18 @@ static uint32_t build_tpmt_public(uint8_t *buf, role_t r, alg_t a) {
         break;
     }
     case ALG_MLDSA65: {
-        /* TPMS_MLDSA_PARMS: single UINT16 parameterSet (TCG V1.85 Table 206). */
+        /* TPMS_MLDSA_PARMS (V1.85 RC4 Table 229): { parameterSet, allowExternalMu }. */
         p = put_u16(p, TPM_MLDSA_65);
+        *p++ = 0;                                /* allowExternalMu = NO */
         /* unique: TPM2B_PUBLIC_KEY_MLDSA (empty for keygen). */
         p = put_u16(p, 0);
         break;
     }
     case ALG_MLKEM768: {
-        /* TPMS_MLKEM_PARMS: single UINT16 parameterSet (TCG V1.85 Table 210). */
+        /* TPMS_MLKEM_PARMS (V1.85 RC4 Table 231): { symmetric, parameterSet }.
+         * Restricted-decrypt EK requires AES-128-CFB; otherwise TPM_ALG_NULL. */
+        int restricted_decrypt = (r == ROLE_EK || r == ROLE_SRK);
+        p = emit_sym_def_obj(p, restricted_decrypt);
         p = put_u16(p, TPM_MLKEM_768);
         p = put_u16(p, 0);
         break;

@@ -261,3 +261,81 @@ docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev bash -c '
   ./vendor/wolftpm/examples/pqc/mlkem_encap -mlkem=768
 '
 ```
+
+---
+
+## Phase 3.5 Resolution (2026-05-02 evening)
+
+Applied V1.85 RC4 spec-conformance fixes to libtpms and re-ran the wolfTPM cross-check.
+
+### libtpms changes
+
+**`libtpms/src/tpm2/TpmTypes.h`**
+
+```diff
+ typedef struct {
+-    TPMI_MLDSA_PARAMETER_SET    parameterSet;
++    TPMI_MLDSA_PARAMETER_SET    parameterSet;
++    TPMI_YES_NO                 allowExternalMu;  /* §12.2.3.6 */
+ } TPMS_MLDSA_PARMS;
+
+ typedef struct {
+-    TPMI_MLKEM_PARAMETER_SET    parameterSet;
++    TPMT_SYM_DEF_OBJECT         symmetric;        /* §12.2.3.8 — first */
++    TPMI_MLKEM_PARAMETER_SET    parameterSet;
+ } TPMS_MLKEM_PARMS;
+```
+
+**`libtpms/src/tpm2/Marshal.c` + `Unmarshal.c`**: matching field-by-field marshal/unmarshal updates. ML-DSA gains `TPMI_YES_NO_Marshal` after parameterSet; ML-KEM gains `TPMT_SYM_DEF_OBJECT_Marshal` *before* parameterSet (allowNull = YES so `TPM_ALG_NULL` is accepted for unrestricted decryption keys).
+
+### Hand-built PQC templates updated to spec layout
+
+- [test_pqc_phase3.c](pqctoday-tpm/tests/crossval/src/test_pqc_phase3.c) — `do_create_primary` now emits `TPMS_MLKEM_PARMS = { sym AES-128-CFB or NULL, parameterSet }` and `TPMS_MLDSA_PARMS = { parameterSet, allowExternalMu=NO }`. Response parsers updated (parm-block size: ML-KEM-EK 8 B, ML-DSA-AK 3 B).
+- [test_tpm_roundtrip.c](pqctoday-tpm/tests/crossval/src/test_tpm_roundtrip.c) — same.
+- [tpm_bench.c](pqctoday-tpm/tests/crossval/src/tpm_bench.c) — ML-KEM EK/SRK uses AES-128-CFB; ML-DSA always emits `allowExternalMu=NO`.
+- [swtpm/swtpm_setup/swtpm.c](pqctoday-tpm/swtpm/src/swtpm_setup/swtpm.c) — `swtpm_tpm2_createprimary_pqc` now takes a `(parms, parms_len)` pair; the EK/AK callers pass the spec-canonical bytes; offset for pubkey-size parsing = `30 + parms_len`.
+
+### Verification — wolfTPM end-to-end against fixed pqctoday-tpm
+
+Same setup as above: wolfSSL 5.9.1 + wolfTPM PR #445 → swtpm socket → libtpms.
+
+| Test | Before fix | After Phase 3.5 fix |
+|---|---|---|
+| `mldsa_sign -mldsa=44` CreatePrimary | `0x2D5 TPM_RC_SIZE` | ✅ **`pubkey 1312 bytes`** (FIPS 204 exact) |
+| `mldsa_sign -mldsa=65` CreatePrimary | `0x2D5 TPM_RC_SIZE` | ✅ **`pubkey 1952 bytes`** |
+| `mldsa_sign -mldsa=87` CreatePrimary | `0x2D5 TPM_RC_SIZE` | ✅ **`pubkey 2592 bytes`** |
+| `mlkem_encap -mlkem=512` CreatePrimary | `0x2C4 TPM_RC_VALUE` | ✅ **`pubkey 800 bytes`** (FIPS 203 exact) |
+| `mlkem_encap -mlkem=768` CreatePrimary | `0x2C4 TPM_RC_VALUE` | ✅ **`pubkey 1184 bytes`** |
+| `mlkem_encap -mlkem=1024` CreatePrimary | `0x2C4 TPM_RC_VALUE` | ✅ **`pubkey 1568 bytes`** |
+| `mldsa_sign` SignSequence path | (unreached) | ❌ `0x143 TPM_RC_COMMAND_CODE` — Phase 4 (sequence commands not yet implemented in libtpms) |
+| `mlkem_encap` Decapsulate | (unreached) | ❌ `0x95 TPM_RC_SIZE` — wolfTPM client reports `ct=32, ss=64` (wrong sizes per FIPS 203); likely wolfTPM `TPM2_Encapsulate` response-parsing bug, separate investigation |
+
+### Compliance regression check
+
+```
+$ make compliance | grep "TCG V1.85 Compliance:"
+TCG V1.85 Compliance: 92 passed, 0 failed, 0 skipped
+```
+
+```
+$ make crossval | tail -8
+[PASS] CreatePrimary(ML-KEM-768): handle=0x80000000, pk=1184 B (FIPS 203)
+[PASS] CreatePrimary(ML-DSA-65 restricted+sign): handle=0x80000001, pk=1952 B
+[PASS] MakeCredential + ActivateCredential roundtrip via ML-KEM-768 EK
+[PASS] SignDigest(restricted ML-DSA AK) → ATTRIBUTES — restriction enforced
+[PASS] CreatePrimary(ML-DSA-65 unrestricted): handle=0x80000002
+[PASS] SignDigest(ML-DSA-65 unrestricted): sigAlg=MLDSA, sig=3309 B — FIPS 204
+10 passed, 0 failed
+```
+
+### Verdict
+
+**Bilateral V1.85 RC4 wire-format conformance achieved on `TPMT_PUBLIC` for all 6 PQC parameter sets.** Independent crypto stacks (libtpms+OpenSSL 3.6.2 vs wolfTPM+wolfCrypt) now agree on:
+- the byte layout of `TPMS_MLDSA_PARMS` (parameterSet + allowExternalMu)
+- the byte layout of `TPMS_MLKEM_PARMS` (symmetric first, parameterSet second)
+- FIPS 203 / 204 public-key sizes returned in `outPublic.unique`
+
+Outstanding cross-implementation work, deferred to Phase 4:
+
+1. `TPM2_SignSequenceStart/Complete` and `TPM2_VerifySequenceStart/Complete` runtime handlers (ALG_MLDSA/HASH_MLDSA streaming sign path).
+2. Investigate wolfTPM `TPM2_Encapsulate` response parsing — either patch libtpms response shape, or file upstream wolfTPM bug.

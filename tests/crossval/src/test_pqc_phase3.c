@@ -47,11 +47,15 @@
 #define TPM_RS_PW                 0x40000009u  /* password pseudo-session */
 
 #define TPM_ALG_SHA256            0x000Bu
+#define TPM_ALG_AES               0x0006u
+#define TPM_ALG_CFB               0x0043u
 #define TPM_ALG_NULL              0x0010u
 #define TPM_ALG_MLDSA             0x00A1u  /* TCG Algorithm Registry */
 #define TPM_ALG_MLKEM             0x00A0u  /* TCG Algorithm Registry */
 #define TPM_MLDSA_65              0x0002u  /* Part 2 Table 207 */
 #define TPM_MLKEM_768             0x0002u  /* Part 2 Table 204 */
+#define TPM_NO                    0x00u
+#define TPM_YES                   0x01u
 
 /* TPMA_OBJECT bit fields (Part 2 §8.3 Table 36) */
 #define TPMA_FIXEDTPM             0x00000002u
@@ -151,8 +155,29 @@ do_create_primary(uint32_t hierarchy, uint16_t algid, uint16_t parameterset,
     p = put_u16(p, (uint16_t)TPM_ALG_SHA256);  /* nameAlg */
     p = put_u32(p, attrs);                     /* objectAttributes */
     p = put_u16(p, 0);                         /* authPolicy.size = 0 */
-    /* TPMS_{MLDSA|MLKEM}_PARMS: single UINT16 parameterSet */
-    p = put_u16(p, parameterset);
+    /* V1.85 RC4 Part 2 Tables 229-231: PQC parameter blocks. Layout depends
+     * on the key type — we have to write the spec-canonical wire form here
+     * because libtpms unmarshals byte-for-byte against TPMS_{MLKEM|MLDSA}_PARMS. */
+    if (algid == (uint16_t)TPM_ALG_MLKEM) {
+        /* TPMS_MLKEM_PARMS = { symmetric (TPMT_SYM_DEF_OBJECT+), parameterSet }.
+         * For restricted decrypt keys, symmetric MUST be an AEAD-capable sym alg
+         * (Part 2 §12.2.3.8); for unrestricted keys, TPM_ALG_NULL is required. */
+        if (attrs & TPMA_RESTRICTED) {
+            p = put_u16(p, (uint16_t)TPM_ALG_AES);  /* symmetric.algorithm */
+            p = put_u16(p, 128);                    /* keyBits.aes */
+            p = put_u16(p, (uint16_t)TPM_ALG_CFB);  /* mode.aes */
+        } else {
+            p = put_u16(p, (uint16_t)TPM_ALG_NULL); /* symmetric.algorithm = NULL → no keyBits/mode */
+        }
+        p = put_u16(p, parameterset);               /* parameterSet (last) */
+    } else if (algid == (uint16_t)TPM_ALG_MLDSA) {
+        /* TPMS_MLDSA_PARMS = { parameterSet, allowExternalMu }. */
+        p = put_u16(p, parameterset);
+        *p++ = TPM_NO;                              /* allowExternalMu = NO (default) */
+    } else {
+        /* HashML-DSA / unknown — keep simple parameterSet form for callers. */
+        p = put_u16(p, parameterset);
+    }
     /* unique: size = 0 (TPM generates) */
     p = put_u16(p, 0);
     put_u16(pub_size_ptr, (uint16_t)(p - pub_start));
@@ -234,12 +259,12 @@ int main(void)
         }
         ekHandle = get_u32(resp + 10);
 
-        /* Parse outPublic: resp+10=handle, +14=paramSize, +18=outPublic.size,
-         * +20=type, +22=nameAlg, +26=attrs, +30=authPolicy.size(=0),
-         * +32=parameterSet, +34=unique.size  */
+        /* Parse outPublic. TPMS_MLKEM_PARMS for restricted decrypt EK is
+         * { sym.alg=AES(2), sym.keyBits=128(2), sym.mode=CFB(2), parameterSet(2) }
+         * = 8 bytes. Layout: type(2)+nameAlg(2)+attrs(4)+policy(2)+parms(8). */
         const uint8_t *q = resp + 18;         /* start of outPublic TPM2B */
         q += 2;                               /* skip outPublic.size field */
-        uint16_t pub_type = get_u16(q); q += 2+2+4+2+2;   /* type,alg,attr,policy,pset */
+        uint16_t pub_type = get_u16(q); q += 2+2+4+2+8;   /* type,alg,attr,policy,parms(8) */
         uint16_t pk_sz    = get_u16(q);       /* unique.size */
 
         if (pub_type != (uint16_t)TPM_ALG_MLKEM || pk_sz != MLKEM_768_PK_SIZE) {
@@ -266,9 +291,11 @@ int main(void)
         }
         akHandle = get_u32(resp + 10);
 
+        /* TPMS_MLDSA_PARMS = { parameterSet(2), allowExternalMu(1) } = 3 bytes.
+         * Layout: type(2)+nameAlg(2)+attrs(4)+policy(2)+parms(3). */
         const uint8_t *q = resp + 18;
         q += 2;
-        uint16_t pub_type = get_u16(q); q += 2+2+4+2+2;
+        uint16_t pub_type = get_u16(q); q += 2+2+4+2+3;
         uint16_t pk_sz    = get_u16(q);
 
         if (pub_type != (uint16_t)TPM_ALG_MLDSA || pk_sz != MLDSA_65_PK_SIZE) {

@@ -4058,11 +4058,21 @@ TPMI_MLDSA_PARAMETER_SET_Unmarshal(TPMI_MLDSA_PARAMETER_SET *target, BYTE **buff
     return rc;
 }
 
-/* TCG V1.85 Part 2 - TPMS_MLDSA_PARMS */
+/* TCG V1.85 RC4 Part 2 Table 229 — TPMS_MLDSA_PARMS = { parameterSet, allowExternalMu } */
 TPM_RC
 TPMS_MLDSA_PARMS_Unmarshal(TPMS_MLDSA_PARMS *target, BYTE **buffer, INT32 *size)
 {
-    return TPMI_MLDSA_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
+    TPM_RC rc = TPMI_MLDSA_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
+    if (rc == TPM_RC_SUCCESS) {
+        rc = UINT8_Unmarshal(&target->allowExternalMu, buffer, size);
+    }
+    if (rc == TPM_RC_SUCCESS) {
+        /* TPMI_YES_NO is exactly 0 (NO) or 1 (YES) per Part 2 Table 39 */
+        if (target->allowExternalMu != NO && target->allowExternalMu != YES) {
+            rc = TPM_RC_VALUE;
+        }
+    }
+    return rc;
 }
 
 /* TCG V1.85 Part 2 - TPMS_HASH_MLDSA_PARMS (HashML-DSA pre-hash variant) */
@@ -4110,11 +4120,16 @@ TPMI_MLKEM_PARAMETER_SET_Unmarshal(TPMI_MLKEM_PARAMETER_SET *target, BYTE **buff
     return rc;
 }
 
-/* TCG V1.85 Part 2 - TPMS_MLKEM_PARMS */
+/* TCG V1.85 RC4 Part 2 Table 231 — TPMS_MLKEM_PARMS = { symmetric, parameterSet }
+ * symmetric is TPMT_SYM_DEF_OBJECT+ (TPM_ALG_NULL allowed for unrestricted keys). */
 TPM_RC
 TPMS_MLKEM_PARMS_Unmarshal(TPMS_MLKEM_PARMS *target, BYTE **buffer, INT32 *size)
 {
-    return TPMI_MLKEM_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
+    TPM_RC rc = TPMT_SYM_DEF_OBJECT_Unmarshal(&target->symmetric, buffer, size, YES);
+    if (rc == TPM_RC_SUCCESS) {
+        rc = TPMI_MLKEM_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
+    }
+    return rc;
 }
 
 /* Table 2:99 §10.3.12 — TPM2B_SHARED_SECRET */

@@ -168,3 +168,96 @@ Before starting Phase 2 command implementation, fix in `TpmTypes.h` / `TpmAlgori
 8. **Correct `docs/implementation-plan.md` command codes** using spec Table 11 values (which wolfTPM also uses)
 9. **Keep `MAX_MLKEM_CT_SIZE = 1568`** — spec-exact for ML-KEM-1024; wolfTPM's 2048 is a conservative impl choice
 10. **Keep `MLKEM_SHARED_SECRET_SIZE = 32`** — spec says impl-dependent; 32 is correct for ML-KEM all param sets
+
+---
+
+## Runtime Cross-Validation (2026-05-02)
+
+**Setup:** built wolfSSL 5.9.1 (`--enable-experimental --enable-dilithium --enable-mlkem --enable-static -fPIC -DWC_RSA_NO_PADDING`), then wolfTPM v4.0.0 PR #445 (`--enable-pqc --enable-swtpm --with-wolfcrypt=/opt/wolfssl`). Symlink workaround: `wolfssl/wolfcrypt/mlkem.h → wc_mlkem.h` (wolfTPM's configure.ac references the old header name; wolfSSL HEAD ships only `wc_mlkem.h`).
+
+Then started our `swtpm` (libtpms with V1.85 PQC, profile `default-v1`) on TCP 2321/2322 and ran wolfTPM's `examples/pqc/mldsa_sign` and `examples/pqc/mlkem_encap` against it.
+
+**Result — TPM commands flow, wire format diverges at `inPublic` parsing:**
+
+| Test | Outcome | TPM RC | Decoded |
+|---|---|---|---|
+| `mldsa_sign -mldsa=44/65/87` | FAIL at `CreatePrimary` | `0x2D5` | `RC_FMT1 \| parameter \| index=2 \| TPM_RC_SIZE` |
+| `mlkem_encap -mlkem=512/768/1024` | FAIL at `CreatePrimary` | `0x2C4` | `RC_FMT1 \| parameter \| index=2 \| TPM_RC_VALUE` |
+
+The decoded indicators (parameter index 2 = `inPublic`) plus the swtpm log confirming `IsEnEnabled(0x131='CreatePrimary'): 1` show the dispatch path works, but the `TPMT_PUBLIC` template wolfTPM marshals doesn't match what our libtpms expects. Investigation pinpointed the divergence to two structures.
+
+### V1.85 RC4 spec vs implementations — `TPMS_MLDSA_PARMS` (Part 2 §12.2.3.6 Table 229)
+
+Spec text: *"Parameter set + allowExternalMu (TPMI_YES_NO): If YES, this key can be used with TPM2_VerifyDigestSignature() and TPM2_SignDigest()."*
+
+| Field | V1.85 RC4 spec | libtpms (us) | wolfTPM | Notes |
+|---|---|---|---|---|
+| `parameterSet` | `TPMI_MLDSA_PARMS` (UINT16) | ✅ present | ✅ present | identical |
+| `allowExternalMu` | `TPMI_YES_NO` (BYTE) | ❌ **missing** | ✅ present | wolfTPM matches spec; libtpms is incomplete |
+
+Wire-format consequence: libtpms expects 2 bytes for `TPMS_MLDSA_PARMS`, wolfTPM marshals 3 bytes → libtpms returns `TPM_RC_SIZE` on the third byte.
+
+### V1.85 RC4 spec vs implementations — `TPMS_MLKEM_PARMS` (Part 2 §12.2.3.8 Table 231)
+
+Spec text (canonical field order): **`symmetric` (TPMT_SYM_DEF_OBJECT+) THEN `parameterSet` (TPMI_MLKEM_PARMS)**.
+
+| Field | V1.85 RC4 spec | libtpms (us) | wolfTPM |
+|---|---|---|---|
+| `symmetric` | required, first | ❌ **missing** | ✅ present (but emitted second?) |
+| `parameterSet` | required, second | ✅ present | ✅ present |
+| Wire bytes | `TPMT_SYM_DEF_OBJECT` then `UINT16` | UINT16 only | reversed from spec? |
+
+Wire-format consequence: libtpms expects 2 bytes (just `parameterSet`); wolfTPM sends more → `TPM_RC_VALUE` on the unrecognised symmetric algorithm bytes parsed as `parameterSet`.
+
+### Verdict
+
+This is **the kind of divergence that source-level cross-check (constants, sizes, struct names) cannot catch.** Both implementations passed all source-level checks but diverge at the byte-on-the-wire level for two structures. Per V1.85 RC4 Part 2 Tables 229 & 231:
+
+- **wolfTPM** is closer to spec on `TPMS_MLDSA_PARMS` (has `allowExternalMu`) but its `TPMS_MLKEM_PARMS` field order may still not match the spec.
+- **pqctoday-tpm** is missing `allowExternalMu` from `TPMS_MLDSA_PARMS` and `symmetric` from `TPMS_MLKEM_PARMS`.
+
+### Action items (Phase 3.5 — spec conformance fixes for libtpms)
+
+1. Add `TPMI_YES_NO allowExternalMu` to `TPMS_MLDSA_PARMS` in `libtpms/src/tpm2/TpmTypes.h`.
+2. Add `TPMT_SYM_DEF_OBJECT symmetric` (as the **first** field) to `TPMS_MLKEM_PARMS`.
+3. Update `TPMS_MLDSA_PARMS_Marshal` / `TPMS_MLDSA_PARMS_Unmarshal` and the ML-KEM analogues.
+4. Re-run `examples/pqc/mldsa_sign` and `mlkem_encap` end-to-end. CreatePrimary should succeed; sign/verify and encap/decap should round-trip cross-implementation.
+5. Add a runtime assertion to `v185_compliance.sh` that verifies the `TPMT_PUBLIC` byte budget matches spec for each PQC type.
+
+### Reproduction recipe
+
+```
+git clone --depth=1 https://github.com/wolfSSL/wolfssl       vendor/wolfssl
+git -C vendor/wolftpm checkout fbbf6fe   # PR #445 merge
+
+docker build -f docker/Dockerfile.dev -t pqctoday-tpm-dev .
+docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev bash -c '
+  # 1) install our libtpms + swtpm
+  cd libtpms && make install && ldconfig && cd ..
+  cd swtpm   && make install && cd ..
+
+  # 2) build wolfSSL with PQC
+  cd vendor/wolfssl && ./autogen.sh && \
+    ./configure --prefix=/opt/wolfssl --enable-experimental --enable-dilithium \
+                --enable-mlkem --enable-static --disable-shared \
+                CFLAGS="-fPIC -DWC_RSA_NO_PADDING" && \
+    make -j$(nproc) && make install && cd ../..
+
+  # 3) work around upstream header naming
+  ln -sf wc_mlkem.h /opt/wolfssl/include/wolfssl/wolfcrypt/mlkem.h
+
+  # 4) build wolfTPM with PQC + swtpm transport
+  cd vendor/wolftpm && ./autogen.sh && \
+    ./configure --prefix=/opt/wolftpm --with-wolfcrypt=/opt/wolfssl \
+                --enable-pqc --enable-swtpm && \
+    make -j$(nproc) && cd ../..
+
+  # 5) start our libtpms-backed swtpm and run wolfTPM clients
+  STATEDIR=$(mktemp -d)
+  swtpm_setup --tpm2 --tpm-state "$STATEDIR" --profile-name default-v1 --overwrite
+  swtpm socket --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 \
+               --tpmstate dir="$STATEDIR" --flags not-need-init --daemon
+  ./vendor/wolftpm/examples/pqc/mldsa_sign  -mldsa=65
+  ./vendor/wolftpm/examples/pqc/mlkem_encap -mlkem=768
+'
+```

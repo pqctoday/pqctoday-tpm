@@ -49,6 +49,9 @@ struct swtpm2_ops {
     int (*create_ek)(struct swtpm *self, gboolean isecc, unsigned int rsa_keysize,
                      gboolean allowsigning, gboolean decryption, gboolean lock_nvram,
                      gchar **ekparam, const gchar **key_description);
+    /* V1.85 PQC: create ML-KEM-768 EK + ML-DSA-65 AK and evict to persistent handles */
+    int (*create_pqc_eks)(struct swtpm *self, gboolean lock_nvram,
+                          gchar **mlkem_ekparam, gchar **mldsa_akparam);
     int (*get_all_pcr_banks)(struct swtpm *self, gchar ***all_pcr_banks);
     int (*set_active_pcr_banks)(struct swtpm *self, gchar **pcr_banks_l, gchar **all_pcr_banks,
                                 gchar ***active);

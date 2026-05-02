@@ -564,6 +564,13 @@ BOOL CryptIsAsymAlgorithm(TPM_ALG_ID algID  // IN: algorithm ID
 #if ALG_ECC
 	  case TPM_ALG_ECC:
 #endif
+#if ALG_MLDSA || ALG_HASH_MLDSA
+	  case TPM_ALG_MLDSA:
+	  case TPM_ALG_HASH_MLDSA:
+#endif
+#if ALG_MLKEM
+	  case TPM_ALG_MLKEM:
+#endif
 	    return TRUE;
 	    break;
 	  default:
@@ -704,6 +711,38 @@ CryptSecretEncrypt(OBJECT*      encryptKey,  // IN: encryption key object
 	      }
 	      break;
 #endif  // ALG_ECC
+#if ALG_MLKEM
+	  case TPM_ALG_MLKEM:
+	      {
+		  TPM2B_SHARED_SECRET  ss;
+		  TPM2B_KEM_CIPHERTEXT ct;
+
+		  /* Encapsulate: generates (ciphertext, 32-byte shared secret). */
+		  result = CryptMlKemEncapsulate(&ss, &ct, encryptKey, NULL);
+		  if(result == TPM_RC_SUCCESS)
+		      {
+			  if(ct.t.size > sizeof(secret->t.secret))
+			      result = TPM_RC_VALUE;
+			  else
+			      {
+				  MemoryCopy(secret->t.secret, ct.t.buffer, ct.t.size);
+				  secret->t.size = ct.t.size;
+				  /* Derive seed via KDFe — mirrors ECC path.
+				   * Z          = 32-byte ML-KEM shared secret
+				   * PartyUInfo = ciphertext (ephemeral encapsulation value)
+				   * PartyVInfo = recipient public key (static value) */
+				  CryptKDFe(encryptKey->publicArea.nameAlg,
+					    &ss.b,
+					    label,
+					    (TPM2B*)&ct,
+					    &encryptKey->publicArea.unique.mlkem.b,
+					    data->t.size * 8,
+					    data->t.buffer);
+			      }
+		      }
+	      }
+	      break;
+#endif  // ALG_MLKEM
 	  default:
 	    FAIL(FATAL_ERROR_INTERNAL);
 	    break;
@@ -851,6 +890,33 @@ CryptSecretDecrypt(OBJECT*      decryptKey,   // IN: decrypt key
 	      }
 	      break;
 #endif  // ALG_ECC
+#if ALG_MLKEM
+	  case TPM_ALG_MLKEM:
+	      {
+		  TPM2B_SHARED_SECRET  ss;
+		  TPM2B_KEM_CIPHERTEXT ct;
+
+		  ct.t.size = secret->t.size;
+		  MemoryCopy(ct.t.buffer, secret->t.secret, secret->t.size);
+
+		  /* Decapsulate: recover 32-byte shared secret from ciphertext. */
+		  result = CryptMlKemDecapsulate(&ss, &ct, decryptKey);
+		  if(result == TPM_RC_SUCCESS)
+		      {
+			  data->t.size =
+			      CryptHashGetDigestSize(decryptKey->publicArea.nameAlg);
+			  /* Same KDFe derivation as encrypt side. */
+			  CryptKDFe(decryptKey->publicArea.nameAlg,
+				    &ss.b,
+				    label,
+				    (TPM2B*)&ct,
+				    &decryptKey->publicArea.unique.mlkem.b,
+				    data->t.size * 8,
+				    data->t.buffer);
+		      }
+	      }
+	      break;
+#endif  // ALG_MLKEM
 #if !ALG_KEYEDHASH
 #  error "KEYEDHASH support is required"
 #endif
@@ -1381,6 +1447,21 @@ BOOL CryptIsAsymSignScheme(TPMI_ALG_PUBLIC      publicType,  // IN: Type of the 
 		}
 	    break;
 #endif  // ALG_ECC
+#if ALG_MLDSA || ALG_HASH_MLDSA
+	  case TPM_ALG_MLDSA:
+	  case TPM_ALG_HASH_MLDSA:
+	    /* For ML-DSA the scheme selector IS the algorithm type itself. */
+	    switch(scheme)
+		{
+		  case TPM_ALG_MLDSA:
+		  case TPM_ALG_HASH_MLDSA:
+		    break;
+		  default:
+		    isSignScheme = FALSE;
+		    break;
+		}
+	    break;
+#endif  // ALG_MLDSA || ALG_HASH_MLDSA
 	  default:
 	    isSignScheme = FALSE;
 	    break;
@@ -1418,6 +1499,18 @@ static BOOL CryptIsValidSignScheme(TPMI_ALG_PUBLIC   publicType,  // IN: Type of
 		isValidSignScheme = FALSE;
 	    }
 	    break;
+
+#if ALG_MLDSA
+	case TPM_ALG_MLDSA:
+	    /* Scheme must be TPM_ALG_MLDSA; no hash field to validate — early exit. */
+	    return (scheme->scheme == TPM_ALG_MLDSA);
+#endif  // ALG_MLDSA
+
+#if ALG_HASH_MLDSA
+	case TPM_ALG_HASH_MLDSA:
+	    /* Hash lives in signature details, not in scheme->details.any — early exit. */
+	    return (scheme->scheme == TPM_ALG_HASH_MLDSA);
+#endif  // ALG_HASH_MLDSA
 
 	default:
 	    isValidSignScheme = FALSE;
@@ -1524,6 +1617,9 @@ BOOL CryptSelectSignScheme(OBJECT*          signObject,  // IN: signing key
     TPMT_SIG_SCHEME* objectScheme;
     TPMT_PUBLIC*     publicArea;
     BOOL             OK;
+#if ALG_MLDSA || ALG_HASH_MLDSA
+    TPMT_SIG_SCHEME  mldsaScheme;   /* synthetic scheme — ML-DSA has no asymDetail.scheme */
+#endif
 
     // If the signHandle is TPM_RH_NULL, then the NULL scheme is used, regardless
     // of the setting of scheme
@@ -1539,11 +1635,27 @@ BOOL CryptSelectSignScheme(OBJECT*          signObject,  // IN: signing key
 	    publicArea = &signObject->publicArea;
 
 	    // Get a pointer to the scheme object.
-	    if(CryptIsAsymAlgorithm(publicArea->type))
+	    if(CryptIsAsymAlgorithm(publicArea->type)
+#if ALG_MLDSA || ALG_HASH_MLDSA
+	       && publicArea->type != TPM_ALG_MLDSA
+	       && publicArea->type != TPM_ALG_HASH_MLDSA
+#endif
+	      )
 	    {
 		objectScheme =
 		    (TPMT_SIG_SCHEME*)&publicArea->parameters.asymDetail.scheme;
 	    }
+#if ALG_MLDSA || ALG_HASH_MLDSA
+	    else if(publicArea->type == TPM_ALG_MLDSA
+		   || publicArea->type == TPM_ALG_HASH_MLDSA)
+	    {
+		/* ML-DSA has no asymDetail.scheme — scheme IS the algorithm type.
+		 * Build a synthetic TPMT_SIG_SCHEME to drive the common selection path. */
+		mldsaScheme.scheme              = publicArea->type;
+		mldsaScheme.details.any.hashAlg = TPM_ALG_NULL;
+		objectScheme = &mldsaScheme;
+	    }
+#endif  // ALG_MLDSA || ALG_HASH_MLDSA
 	    else if(publicArea->type == TPM_ALG_KEYEDHASH)
 	    {
 		objectScheme =
@@ -1551,9 +1663,8 @@ BOOL CryptSelectSignScheme(OBJECT*          signObject,  // IN: signing key
 	    }
 	    else
 	    {
-	        // Only asymmetric key types (RSA, ECC) and keyed hashes can be
-		// used for signing. A symmetric cipher can be used to encrypt and
-		// decrypt but can't be used for signing.
+	        // Only asymmetric key types (RSA, ECC, ML-DSA) and keyed hashes can be
+		// used for signing. A symmetric cipher or ML-KEM key cannot sign.
 		return FALSE;
 	    }
 

@@ -265,6 +265,8 @@ libtpms_tpm2_la_SOURCES = \
 	tpm2/SessionCommands.c \
 	tpm2/SessionProcess.c \
 	tpm2/SigningCommands.c \
+	tpm2/PqcMlDsaCommands.c \
+	tpm2/PqcKemCommands.c \
 	tpm2/StartupCommands.c \
 	tpm2/SymmetricCommands.c \
 	tpm2/TestingCommands.c \
@@ -518,6 +520,14 @@ noinst_HEADERS += \
 	tpm2/SetPrimaryPolicy_fp.h \
 	tpm2/Shutdown_fp.h \
 	tpm2/Sign_fp.h \
+	tpm2/SignDigest_fp.h \
+	tpm2/VerifyDigestSignature_fp.h \
+	tpm2/Encapsulate_fp.h \
+	tpm2/Decapsulate_fp.h \
+	tpm2/SignSequenceStart_fp.h \
+	tpm2/SignSequenceComplete_fp.h \
+	tpm2/VerifySequenceStart_fp.h \
+	tpm2/VerifySequenceComplete_fp.h \
 	tpm2/simulatorPrivate.h \
 	tpm2/simulator_sysheaders.h \
 	tpm2/Simulator_fp.h \

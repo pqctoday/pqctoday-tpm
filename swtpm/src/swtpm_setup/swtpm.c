@@ -421,6 +421,20 @@ static const struct swtpm_cops swtpm_cops = {
 #define TPM2_ALG_ECC      0x0023
 #define TPM2_ALG_CFB      0x0043
 
+/* V1.85 PQC algorithm identifiers */
+#define TPM2_ALG_MLKEM    0x00A0
+#define TPM2_ALG_MLDSA    0x00A1
+
+/* V1.85 ML-KEM parameter sets (TPMI_MLKEM_PARAMETER_SET) */
+#define TPM2_MLKEM_512    0x0001
+#define TPM2_MLKEM_768    0x0002
+#define TPM2_MLKEM_1024   0x0003
+
+/* V1.85 ML-DSA parameter sets (TPMI_MLDSA_PARAMETER_SET) */
+#define TPM2_MLDSA_44     0x0001
+#define TPM2_MLDSA_65     0x0002
+#define TPM2_MLDSA_87     0x0003
+
 #define TPM2_CAP_PCRS     0x00000005
 
 #define TPM2_ECC_NIST_P384 0x0004
@@ -451,6 +465,15 @@ static const struct swtpm_cops swtpm_cops = {
 #define TPM2_EK_RSA3072_HANDLE       0x8101001c
 #define TPM2_EK_ECC_SECP384R1_HANDLE 0x81010016
 #define TPM2_SPK_HANDLE              0x81000001
+
+/* PQC EK/AK persistent handles — pqctoday-tpm internal allocation
+ * (no TCG IWG provisioning spec for PQC EKs published yet) */
+#define TPM2_EK_MLKEM768_HANDLE      0x810100A0
+#define TPM2_EK_MLDSA65_HANDLE       0x810100A1
+
+/* PQC EK/AK NV indices — pqctoday-tpm internal allocation */
+#define TPM2_NV_INDEX_MLKEM768_EKTEMPLATE 0x01c000A1
+#define TPM2_NV_INDEX_MLDSA65_AKTEMPLATE  0x01c000A3
 
 #define TPM2_DURATION_SHORT     2000 /* ms */
 #define TPM2_DURATION_MEDIUM    7500 /* ms */
@@ -1095,6 +1118,210 @@ err_too_short:
     return 1;
 }
 
+/* Create a PQC (ML-KEM or ML-DSA) primary key — V1.85 §29.
+ *
+ * Both ML-KEM and ML-DSA use a single-field TPMS_*_PARMS { parameterSet }
+ * with no symmetric or scheme sub-fields, making the serialized template
+ * much simpler than RSA/ECC:
+ *   type(2) + nameAlg(2) + attrs(4) + authPolicy.size(2) + authPolicy +
+ *   parameterSet(2) + unique.size(2)=0
+ *
+ * With empty authpolicy the response unique.size is at byte offset 32.
+ */
+static int swtpm_tpm2_createprimary_pqc(struct swtpm *self, uint32_t primaryhandle,
+                                        uint16_t algid, uint16_t hashalg,
+                                        unsigned int keyflags,
+                                        const unsigned char *authpolicy, size_t authpolicy_len,
+                                        uint16_t parameterset, uint16_t exp_pksize,
+                                        size_t off, uint32_t *curr_handle,
+                                        unsigned char *ektemplate, size_t *ektemplate_len,
+                                        gchar **ekparam, const gchar **key_description)
+{
+    struct tpm_req_header hdr = TPM_REQ_HEADER_INITIALIZER(TPM2_ST_SESSIONS, 0, TPM2_CC_CREATEPRIMARY);
+    struct tpm2_authblock authblock = TPM2_AUTHBLOCK_INITIALIZER(TPM2_RS_PW);
+    g_autofree unsigned char *public = NULL;
+    ssize_t public_len;
+    g_autofree unsigned char *createprimary = NULL;
+    ssize_t createprimary_len;
+    int ret;
+    unsigned char tpmresp[4096];  /* ML-DSA-65 pk=1952 B; need >~2700 B total */
+    size_t tpmresp_len = sizeof(tpmresp);
+    uint16_t pksize;
+
+    public_len =
+        memconcat(&public,
+                  (unsigned char[]){
+                      AS2BE(algid), AS2BE(hashalg), AS4BE(keyflags), AS2BE(authpolicy_len)
+                  }, (size_t)10,
+                  authpolicy, authpolicy_len,
+                  (unsigned char[]){ AS2BE(parameterset) }, (size_t)2,
+                  (unsigned char[]){ AS2BE(0) }, (size_t)2,
+                  NULL);
+    if (public_len < 0) {
+        logerr(self->logfile, "Internal error in %s: memconcat failed\n", __func__);
+        return 1;
+    }
+    if (ektemplate) {
+        if (*ektemplate_len < (size_t)public_len) {
+            logerr(self->logfile,
+                   "Internal error in %s: need %zu bytes for ektemplate, got only %zu\n",
+                   __func__, (size_t)public_len, *ektemplate_len);
+            return 1;
+        }
+        memcpy(ektemplate, public, public_len);
+        *ektemplate_len = public_len;
+    }
+
+    createprimary_len =
+        memconcat(&createprimary,
+                  &hdr, sizeof(hdr),
+                  (unsigned char[]) {AS4BE(primaryhandle), AS4BE(sizeof(authblock))}, (size_t)8,
+                  &authblock, sizeof(authblock),
+                  (unsigned char[]) {AS2BE(4), AS4BE(0), AS2BE(public_len)}, (size_t)8,
+                  public, public_len,
+                  (unsigned char[]) {AS4BE(0), AS2BE(0)}, (size_t)6,
+                  NULL);
+    if (createprimary_len < 0) {
+        logerr(self->logfile, "Internal error in %s: memconcat failed\n", __func__);
+        return 1;
+    }
+    ((struct tpm_req_header *)createprimary)->size = htobe32(createprimary_len);
+
+    ret = transfer(self, createprimary, createprimary_len, "TPM2_CreatePrimary(PQC)", FALSE,
+                   tpmresp, &tpmresp_len, TPM2_DURATION_LONG);
+    if (ret != 0)
+        return 1;
+
+    if (curr_handle) {
+        if (tpmresp_len < 10 + sizeof(*curr_handle))
+            goto err_too_short_pqc;
+        memcpy(curr_handle, &tpmresp[10], sizeof(*curr_handle));
+        *curr_handle = be32toh(*curr_handle);
+    }
+
+    if (tpmresp_len < off + sizeof(pksize))
+        goto err_too_short_pqc;
+    memcpy(&pksize, &tpmresp[off], sizeof(pksize));
+    pksize = be16toh(pksize);
+    if (pksize != exp_pksize) {
+        logerr(self->logfile,
+               "PQC CreatePrimary: unexpected public key size %u (expected %u) at offset %zu\n",
+               (unsigned)pksize, (unsigned)exp_pksize, off);
+        return 1;
+    }
+    if (ekparam) {
+        if (tpmresp_len < off + 2 + pksize)
+            goto err_too_short_pqc;
+        *ekparam = print_as_hex(&tpmresp[off + 2], pksize);
+    }
+    return 0;
+
+err_too_short_pqc:
+    logerr(self->logfile, "Response from TPM2_CreatePrimary(PQC) is too short!\n");
+    return 1;
+}
+
+/* Create ML-KEM-768 EK in Endorsement hierarchy */
+static int swtpm_tpm2_createprimary_ek_mlkem768(struct swtpm *self, uint32_t *curr_handle,
+                                                unsigned char *ektemplate, size_t *ektemplate_len,
+                                                gchar **ekparam, const gchar **key_description)
+{
+    /* keyflags: fixedTPM, sensitiveDataOrigin, userWithAuth, adminWithPolicy,
+     *           noDA, restricted, decrypt — matches ECC EK restricted+decrypt profile */
+    unsigned int keyflags = 0x000300f2;
+    const unsigned char authpolicy[0] = {};
+    /* off=32: 10(hdr)+4(handle)+4(paramSize)+2(outPublic.size)+2(type)+2(nameAlg)+
+     *         4(attrs)+2(authPolicy.size=0)+2(parameterSet) */
+    size_t off = 32;
+
+    if (key_description)
+        *key_description = "mlkem768";
+
+    return swtpm_tpm2_createprimary_pqc(self, TPM2_RH_ENDORSEMENT,
+                                        TPM2_ALG_MLKEM, TPM2_ALG_SHA256,
+                                        keyflags,
+                                        authpolicy, sizeof(authpolicy),
+                                        TPM2_MLKEM_768, 1184,
+                                        off, curr_handle,
+                                        ektemplate, ektemplate_len, ekparam, key_description);
+}
+
+/* Create ML-DSA-65 AK (restricted signing) in Owner hierarchy */
+static int swtpm_tpm2_createprimary_ak_mldsa65(struct swtpm *self, uint32_t *curr_handle,
+                                               unsigned char *ektemplate, size_t *ektemplate_len,
+                                               gchar **ekparam, const gchar **key_description)
+{
+    /* keyflags: fixedTPM, sensitiveDataOrigin, userWithAuth, adminWithPolicy,
+     *           noDA, restricted, sign */
+    unsigned int keyflags = 0x000500f2;
+    const unsigned char authpolicy[0] = {};
+    size_t off = 32;
+
+    if (key_description)
+        *key_description = "mldsa65";
+
+    return swtpm_tpm2_createprimary_pqc(self, TPM2_RH_OWNER,
+                                        TPM2_ALG_MLDSA, TPM2_ALG_SHA256,
+                                        keyflags,
+                                        authpolicy, sizeof(authpolicy),
+                                        TPM2_MLDSA_65, 1952,
+                                        off, curr_handle,
+                                        ektemplate, ektemplate_len, ekparam, key_description);
+}
+
+/* Create, evict, and optionally store templates for both PQC keys */
+static int swtpm_tpm2_create_pqc_eks(struct swtpm *self, gboolean lock_nvram,
+                                     gchar **mlkem_ekparam, gchar **mldsa_akparam)
+{
+    uint32_t curr_handle;
+    int ret;
+    unsigned char ektemplate[64];
+    size_t ektemplate_len;
+    const gchar *key_description = NULL;
+
+    /* ML-KEM-768 EK in Endorsement hierarchy */
+    ektemplate_len = sizeof(ektemplate);
+    ret = swtpm_tpm2_createprimary_ek_mlkem768(self, &curr_handle,
+                                               ektemplate, &ektemplate_len,
+                                               mlkem_ekparam, &key_description);
+    if (ret != 0)
+        return 1;
+
+    ret = swtpm_tpm2_evictcontrol(self, curr_handle, TPM2_EK_MLKEM768_HANDLE);
+    if (ret != 0) {
+        logerr(self->logfile,
+               "Failed to persist ML-KEM-768 EK to handle 0x%x\n", TPM2_EK_MLKEM768_HANDLE);
+        swtpm_tpm2_flushcontext(self, curr_handle);
+        return 1;
+    }
+    logit(self->logfile, "Successfully created ML-KEM-768 EK with handle 0x%x.\n",
+          TPM2_EK_MLKEM768_HANDLE);
+    swtpm_tpm2_flushcontext(self, curr_handle);
+
+    /* ML-DSA-65 AK in Owner hierarchy */
+    ektemplate_len = sizeof(ektemplate);
+    key_description = NULL;
+    ret = swtpm_tpm2_createprimary_ak_mldsa65(self, &curr_handle,
+                                              ektemplate, &ektemplate_len,
+                                              mldsa_akparam, &key_description);
+    if (ret != 0)
+        return 1;
+
+    ret = swtpm_tpm2_evictcontrol(self, curr_handle, TPM2_EK_MLDSA65_HANDLE);
+    if (ret != 0) {
+        logerr(self->logfile,
+               "Failed to persist ML-DSA-65 AK to handle 0x%x\n", TPM2_EK_MLDSA65_HANDLE);
+        swtpm_tpm2_flushcontext(self, curr_handle);
+        return 1;
+    }
+    logit(self->logfile, "Successfully created ML-DSA-65 AK with handle 0x%x.\n",
+          TPM2_EK_MLDSA65_HANDLE);
+    swtpm_tpm2_flushcontext(self, curr_handle);
+
+    (void)lock_nvram;  /* NV template storage pending TCG IWG PQC provisioning spec */
+    return 0;
+}
+
 static int swtpm_tpm2_createprimary_spk_ecc_nist_p384(struct swtpm *self,
                                                       uint32_t *curr_handle)
 {
@@ -1520,6 +1747,7 @@ static const struct swtpm2_ops swtpm_tpm2_ops = {
     .shutdown = swtpm_tpm2_shutdown,
     .create_spk = swtpm_tpm2_create_spk,
     .create_ek = swtpm_tpm2_create_ek,
+    .create_pqc_eks = swtpm_tpm2_create_pqc_eks,
     .get_all_pcr_banks = swtpm_tpm2_get_all_pcr_banks,
     .set_active_pcr_banks = swtpm_tpm2_set_active_pcr_banks,
     .write_ek_cert_nvram = swtpm_tpm2_write_ek_cert_nvram,

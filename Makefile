@@ -56,7 +56,8 @@ crossval-softhsm: crossval-build
 
 compliance: crossval-build
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
-	    bash tests/compliance/v185_compliance.sh
+	    bash -c 'cd libtpms && make install > /dev/null 2>&1 && ldconfig && cd - && \
+	             bash tests/compliance/v185_compliance.sh'
 
 compliance-softhsm: crossval-build
 	@echo "Running full compliance (includes softhsmv3) with $(SOFTHSMV3_DIR)"

@@ -24,6 +24,8 @@
 
 #if CC_SignDigest
 
+#  include "Attest_spt_fp.h"    /* IsSigningObject() */
+
 /*
  * Sign a pre-computed digest using a loaded ML-DSA or HashML-DSA key.
  *
@@ -90,9 +92,9 @@ TPM2_VerifyDigestSignature(VerifyDigestSignature_In  *in,
         return TPM_RCS_ATTRIBUTES + RC_VerifyDigestSignature_keyHandle;
 
     result = CryptMlDsaValidateSignature(
-        in->keyHandle,
-        &in->digest,
         &in->signature,
+        signObject,
+        &in->digest,
         in->context.t.size > 0 ? &in->context : NULL);
 
     if(result != TPM_RC_SUCCESS)

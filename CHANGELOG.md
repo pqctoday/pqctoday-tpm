@@ -4,6 +4,47 @@ All notable changes to pqctoday-tpm are documented here.
 
 ---
 
+## [Unreleased] — Phase 0 + Phase 2 + Phase 3
+
+### Phase 3 — PQC Key Hierarchy
+
+**Root cause fixes in `libtpms/src/tpm2/CryptUtil.c`**
+- `CryptIsAsymAlgorithm`: added `TPM_ALG_MLDSA`, `TPM_ALG_HASH_MLDSA`, `TPM_ALG_MLKEM` cases — unblocks `MakeCredential`, `ActivateCredential`, and `CryptSelectSignScheme` for all PQC key types
+- `CryptIsAsymSignScheme`: added ML-DSA / HashML-DSA cases — validates signature scheme against key type
+- `CryptIsValidSignScheme`: added early-return cases for ML-DSA and HashML-DSA — skips hash-field validation that doesn't apply to pure ML-DSA
+- `CryptSelectSignScheme`: excluded ML-DSA/HashML-DSA from the `asymDetail.scheme` branch (those keys use `TPMS_MLDSA_PARMS` not `TPMS_ASYM_PARMS`); synthesizes a `TPMT_SIG_SCHEME` from the key type directly
+- `CryptSecretEncrypt`: added `TPM_ALG_MLKEM` case — encapsulates via `CryptMlKemEncapsulate`, derives seed via `KDFe(nameAlg, ss, label, ct, pk, bits)`
+- `CryptSecretDecrypt`: added `TPM_ALG_MLKEM` case — decapsulates via `CryptMlKemDecapsulate`, derives same seed via `KDFe`
+
+**Bug fix: Phase 2 command files missing from `libtpms/src/Makefile.am`**
+- Added `tpm2/PqcMlDsaCommands.c` and `tpm2/PqcKemCommands.c` to the `libtpms_tpm2_la_SOURCES` list — previously these were compiled but not linked into `libtpms.so`, causing `TPM2_VerifyDigestSignature`, `TPM2_SignDigest`, `TPM2_Encapsulate`, `TPM2_Decapsulate` to be undefined at runtime
+- Added corresponding `_fp.h` headers to the `EXTRA_DIST` list
+
+**Bug fix: `PqcMlDsaCommands.c` — wrong arguments to `CryptMlDsaValidateSignature`**
+- The call passed `(in->keyHandle, &in->digest, &in->signature, ctx)` but the function signature is `(sig, key, digest, ctx)` — corrected to `(&in->signature, signObject, &in->digest, ctx)`
+- Added `#include "Attest_spt_fp.h"` to expose `IsSigningObject()` (follows the pattern in `SigningCommands.c`)
+
+**V1.85 PQC EK/AK provisioning in `swtpm/src/swtpm_setup/swtpm.c`**
+- Added `TPM2_ALG_MLKEM` (0x00A0), `TPM2_ALG_MLDSA` (0x00A1) and parameter-set constants
+- Added provisional persistent handle and NV index constants for ML-KEM-768 EK (0x810100A0) and ML-DSA-65 AK (0x810100A1)
+- Added `swtpm_tpm2_createprimary_pqc()` — generic PQC CreatePrimary builder using the simple `parameterSet`-only template (no symmetric or scheme sub-fields); 4096-byte response buffer to accommodate ML-DSA-65's 1952-byte public key
+- Added `swtpm_tpm2_createprimary_ek_mlkem768()` — ML-KEM-768 EK in Endorsement hierarchy, attrs `0x000300f2` (restricted+decrypt), off=32
+- Added `swtpm_tpm2_createprimary_ak_mldsa65()` — ML-DSA-65 AK in Owner hierarchy, attrs `0x000500f2` (restricted+sign), off=32
+- Added `swtpm_tpm2_create_pqc_eks()` — creates both keys and evicts to persistent handles; NV template storage deferred pending TCG IWG PQC provisioning spec
+- Registered `create_pqc_eks` in `swtpm2_ops` (swtpm.h + ops table)
+
+**`swtpm/src/swtpm_setup/swtpm_setup.c`**
+- `tpm2_create_eks_and_certs()`: calls `create_pqc_eks` after RSA+ECC EK creation; non-fatal (logs a note if the TPM lacks V1.85 support)
+
+**`Makefile`**
+- `compliance` target: install libtpms before running the test suite (fixes `libtpms.so.0: cannot open shared object file`)
+
+### Compliance
+- Score: **85 PASS / 0 FAIL / 0 SKIP** (up from 83; the previous 84→85 gain came from fixing the `test_tpm_roundtrip` undefined-symbol regression)
+- `make crossval` and `make compliance` both clean
+
+---
+
 ## [Unreleased] — Phase 0 + Phase 2
 
 ### Phase 0 — V1.85 Foundational Types, Constants, and Marshal

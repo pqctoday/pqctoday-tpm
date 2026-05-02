@@ -466,8 +466,23 @@ static int tpm2_create_eks_and_certs(unsigned long flags, const gchar *config_fi
 
      /* 2nd key will be an ECC; no more platform cert */
      flags = (flags & ~SETUP_PLATFORM_CERT_F) | SETUP_TPM2_ECC_F;
-     return tpm2_create_ek_and_cert(flags, config_file, certsdir, vmid, rsa_keysize, swtpm2,
-                                    user_certsdir);
+     ret = tpm2_create_ek_and_cert(flags, config_file, certsdir, vmid, rsa_keysize, swtpm2,
+                                   user_certsdir);
+     if (ret != 0)
+         return 1;
+
+     /* 3rd+4th: V1.85 PQC EKs — ML-KEM-768 EK + ML-DSA-65 AK.
+      * Non-fatal: older libtpms builds without V1.85 PQC will return an error here. */
+     if (swtpm2->ops->create_pqc_eks) {
+         g_autofree gchar *mlkem_ekparam = NULL;
+         g_autofree gchar *mldsa_akparam = NULL;
+         if (swtpm2->ops->create_pqc_eks(&swtpm2->swtpm, !!(flags & SETUP_LOCK_NVRAM_F),
+                                         &mlkem_ekparam, &mldsa_akparam) != 0)
+             logit(gl_LOGFILE,
+                   "Note: PQC EK provisioning skipped (V1.85 support not available).\n");
+     }
+
+     return 0;
 }
 
 /* Get the default PCR banks from the config file and if nothing can

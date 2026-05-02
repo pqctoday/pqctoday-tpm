@@ -12,7 +12,7 @@ Fork of [libtpms v0.10.2](https://github.com/stefanberger/libtpms) + [swtpm v0.1
 | --- | --- | --- |
 | **1 — Foundation** | Algorithm IDs, crypto primitives (ML-DSA + ML-KEM), marshal/unmarshal, NIST ACVP KATs | ✅ Complete |
 | **2 — V1.85 Commands** | `TPM2_Encapsulate`, `TPM2_Decapsulate`, `TPM2_SignDigest`, `TPM2_VerifyDigestSignature` — live; sequence commands wired, pending Phase 4 | ✅ In progress (4/8 live) |
-| **3 — Key Hierarchy** | ML-KEM EK + ML-DSA AK provisioning, `MakeCredential`/`ActivateCredential` via ML-KEM, `CryptSelectSignScheme` for ML-DSA | ✅ Complete (X.509 EK certs deferred to Phase 3.1) |
+| **3 — Key Hierarchy** | ML-KEM EK + ML-DSA AK provisioning, `MakeCredential`/`ActivateCredential` via ML-KEM, `CryptSelectSignScheme` for ML-DSA, self-signed X.509 PQC EK certs | ✅ Complete |
 | 4 — Attestation | `TPM2_Quote`, `TPM2_Certify`, PCR banks | 🔲 Not started |
 | 5 — WASM | Emscripten build, browser API, PQC Today integration | 🔲 Not started |
 
@@ -25,8 +25,9 @@ Fork of [libtpms v0.10.2](https://github.com/stefanberger/libtpms) + [swtpm v0.1
 - `TPM2_VerifyDigestSignature` — verify an ML-DSA / HashML-DSA signature over a pre-computed digest, returns `TPM_ST_DIGEST_VERIFIED` ticket
 - `MakeCredential` / `ActivateCredential` transport via ML-KEM-768 (`CryptSecretEncrypt`/`Decrypt` ML-KEM path)
 - ML-KEM-768 EK and ML-DSA-65 AK auto-provisioned by `swtpm_setup` at Docker startup (persistent handles `0x810100A0`/`0x810100A1`)
+- Self-signed X.509 EK certs (`mlkem_ek.cert`, `mldsa_ak.cert`) emitted by `swtpm_setup --create-ek-cert`: ML-KEM-768 / ML-DSA-65 SPKI signed with an ephemeral ML-DSA-65 issuer (NIST CSOR OIDs auto-emitted by OpenSSL 3.5+; FIPS 204 §5.4 hash-and-sign internally)
 - All classical TPM operations (RSA, ECC, symmetric) work unchanged via the swtpm socket
-- 85-check TCG V1.85 compliance suite passes end-to-end
+- TCG V1.85 PQC compliance suite: **92 passed, 0 failed, 0 skipped**
 
 **Streaming sequence commands** (`TPM2_SignSequenceStart/Complete`, `TPM2_VerifySequenceStart/Complete`) are dispatch-wired and return `TPM_RC_COMMAND_CODE` until Phase 4, which requires a new `MLDSA_SEQUENCE_OBJECT` type for holding live `EVP_MD_CTX*` state across command boundaries.
 

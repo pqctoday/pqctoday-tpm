@@ -20,7 +20,7 @@ docker-dev:
 
 crossval-build:
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
-	    bash -c 'cd libtpms && make install > /dev/null 2>&1 && ldconfig && cd - && \
+	    bash -c 'cd libtpms && make clean > /dev/null 2>&1 && make install > /dev/null 2>&1 && ldconfig && cd - && \
 	             cmake -S tests/crossval -B tests/crossval/build \
 	                 -DCMAKE_PREFIX_PATH=/opt/openssl \
 	                 -DOPENSSL_ROOT_DIR=/opt/openssl && \
@@ -34,7 +34,8 @@ crossval: crossval-build
 	docker run --rm -v "$$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
 	    bash -c 'cd libtpms && make install > /dev/null 2>&1 && ldconfig && cd - && \
 	             tests/crossval/build/test_pqc_crossval && \
-	             tests/crossval/build/test_tpm_roundtrip'
+	             tests/crossval/build/test_tpm_roundtrip && \
+	             tests/crossval/build/test_pqc_phase3'
 
 crossval-softhsm: crossval-build
 	@echo "Running cross-val with softhsmv3 C++ engine at $(SOFTHSMV3_DIR)"

@@ -43,6 +43,14 @@ target_link_libraries(test_tpm_roundtrip PRIVATE
     tpms  # libtpms.so exports TPMLIB_MainInit / TPMLIB_Process / TPMLIB_Terminate
 )
 
+# Phase 3 end-to-end key hierarchy + credential roundtrip test.
+# Requires libtpms installed (make install inside Docker).
+add_executable(test_pqc_phase3
+    src/test_pqc_phase3.c
+)
+target_compile_options(test_pqc_phase3 PRIVATE -Wall -Wextra)
+target_link_libraries(test_pqc_phase3 PRIVATE tpms)
+
 # tpm_bench — parameterized TPM2_CreatePrimary harness used by the
 # pqctoday-sandbox scenario 36 to drive the EK/SRK/AIK/IDevID migration
 # matrix against the real libtpms engine (no swtpm socket needed).

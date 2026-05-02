@@ -606,6 +606,18 @@ UINT32 NvObjectToBuffer(OBJECT* object, BYTE* buffer, UINT32 size)
         break;
     case TPM_ALG_SYMCIPHER:
         break;
+#if ALG_MLDSA || ALG_HASH_MLDSA
+    case TPM_ALG_MLDSA:
+    case TPM_ALG_HASH_MLDSA:
+        /* PQC objects only exist at StateFormatLevel >= 7 (libtpms v0.10+) */
+        marshalAnyObject = true;
+        break;
+#endif
+#if ALG_MLKEM
+    case TPM_ALG_MLKEM:
+        marshalAnyObject = true;
+        break;
+#endif
     default:
         // must never happen
         TPMLIB_LogTPM2Error("%s : Unhandled object type: %d\n",

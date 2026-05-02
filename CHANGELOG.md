@@ -6,7 +6,82 @@ All notable changes to pqctoday-tpm are documented here.
 
 ## [Unreleased] — Phase 0 + Phase 2 + Phase 3
 
-### Phase 3 — PQC Key Hierarchy
+### Phase 3 — Runtime Plumbing & PQC EK X.509 Certs (Steps 1–5)
+
+Closes the gap between Phase 2 command handlers and end-to-end use. Compliance: **92 passed, 0 failed, 0 skipped**.
+
+**`libtpms/src/tpm2/CommandAttributeData.h`** — generated table fix
+- `s_ccAttr[]` and `s_commandAttributes[]` were missing entries for command-code slots `0x01A0`–`0x01AA`. Added 11 entries (3 reserved fill + 8 V1.85 PQC). Without these, `CommandCodeToCommandIndex(0x1A6)` returned `UNIMPLEMENTED_COMMAND_INDEX` and every PQC command rejected with `TPM_RC_COMMAND_CODE`.
+
+**`libtpms/src/tpm2/CommandDispatchData.h`** — generated table fix
+- `s_CommandDataArray[]` was missing the 3 fill entries for reserved slots `0x1A0`/`0x1A1`/`0x1A2` that `LIBRARY_COMMAND_ARRAY_SIZE` accounts for via `ADD_FILL`. The off-by-3 made `s_CommandDataArray[135]` point to the Phase-4 `VerifySequenceStart` stub (NULL) instead of `_SignDigestData`, tripping `pAssert(desc != NULL)` in `ParseHandleBuffer` and entering FATAL_ERROR_INTERNAL.
+
+**`libtpms/src/tpm2/RuntimeProfile.c`** — `defaultCommandsProfile`
+- Added `0x1a5-0x1a8` to the `default-v1` profile so `VerifyDigestSignature` / `SignDigest` / `Encapsulate` / `Decapsulate` are runtime-enabled. The frozen `null` profile (libtpms v0.9 compat) intentionally remains unchanged.
+
+**`libtpms/src/tpm2/NVDynamic.c`** — `NvObjectToBuffer`
+- Added `TPM_ALG_MLDSA`, `TPM_ALG_HASH_MLDSA`, `TPM_ALG_MLKEM` cases. PQC objects always require `ANY_OBJECT_Marshal` (StateFormatLevel ≥ 7). Without these cases, `TPM2_EvictControl` for PQC EKs hit the `default:` arm and called `FAIL(FATAL_ERROR_INTERNAL)`, putting the TPM into failure mode mid-provisioning.
+
+**`tests/crossval/src/test_pqc_phase3.c`**
+- Added `TPMLIB_SetProfile("{\"Name\":\"default-v1\"}")` before `TPMLIB_MainInit()` so PQC commands are enabled in the per-test TPM. The default null profile would otherwise gate them out.
+
+**`swtpm/src/swtpm_setup/swtpm.c`** — Phase 3 Step 5: self-signed PQC EK certificates
+- New `swtpm_tpm2_pqc_write_ek_certs()` op: writes self-signed X.509 certs (DER) for ML-KEM-768 EK and ML-DSA-65 AK to the user certs directory.
+- Cert structure: ephemeral ML-DSA-65 issuer key (per call), subject SPKI = TPM-resident PQC pubkey via `EVP_PKEY_fromdata` + `OSSL_PKEY_PARAM_PUB_KEY`, NIST CSOR OIDs auto-emitted by OpenSSL 3.5+, signed via `EVP_DigestSignInit_ex(..., NULL md, ..., mldsa_pkey, NULL)` per FIPS 204 §5.4 (ML-DSA is hash-and-sign internally; no external hash).
+- Cert filenames: `mlkem_ek.cert` (≈ 4.7 KB) and `mldsa_ak.cert` (≈ 5.5 KB). Validity 10 years. Issuer CN = "pqctoday-tpm PQC EK CA (ephemeral)" — these are development artefacts, not production trust anchors. The TCG IWG PQC EK Credential Profile will eventually replace this scheme.
+- Guarded by `#if OPENSSL_VERSION_NUMBER >= 0x30500000L`; older OpenSSL silently skips with a log note.
+- `swtpm_tpm2_create_pqc_eks()`: `EvictControl` failure for PQC handles is now a `logit` note, not fatal — the TCG IWG hasn't finalised PQC EK persistent handle ranges yet, and the pubkey is captured before persistence anyway.
+
+**`swtpm/src/swtpm_setup/swtpm.h`**
+- Added `pqc_write_ek_certs` op to the TPM 2 vtable.
+
+**`swtpm/src/swtpm_setup/swtpm_setup.c`**
+- `tpm2_create_eks_and_certs()`: when `--create-ek-cert` is set, after PQC EK provisioning, calls `pqc_write_ek_certs` with the user certs directory (falls back to staging dir when `--write-ek-cert-files` is absent).
+
+**Smoke test (Docker dev container, OpenSSL 3.6.2):**
+```
+$ swtpm_setup --tpm2 --create-ek-cert --profile-name default-v1 \
+              --write-ek-cert-files <dir> --tpm-state <dir>
+$ ls <dir>
+ek-rsa2048.crt  ek-secp384r1.crt  mldsa_ak.cert  mlkem_ek.cert
+$ openssl x509 -in <dir>/mlkem_ek.cert -inform DER -text -noout | grep -E "Algorithm|Subject"
+        Signature Algorithm: ML-DSA-65
+        Subject: CN=TPM EK (ML-KEM-768), O=pqctoday-tpm
+            Public Key Algorithm: ML-KEM-768
+```
+
+### Phase 3 — PQC Key Hierarchy (Tests)
+
+**`libtpms/src/tpm2/PqcMlDsaCommands.c` — restriction enforcement fix**
+
+- `TPM2_SignDigest`: added check `IS_ATTRIBUTE(…, TPMA_OBJECT, restricted)` before `CryptSelectSignScheme` — restricted signing keys must be rejected with `TPM_RC_ATTRIBUTES` because `TPM2_SignDigest` accepts arbitrary pre-hashed data without a hashcheck ticket (V1.85 §29.2.1; Part 1 §22.1.2)
+
+**`tests/crossval/src/test_pqc_phase3.c`** (new)
+
+- **Test 1**: `TPM2_CreatePrimary(ML-KEM-768)` in Endorsement hierarchy — verifies pk = 1184 B (FIPS 203)
+- **Test 2**: `TPM2_CreatePrimary(ML-DSA-65 restricted+sign)` in Owner hierarchy — verifies pk = 1952 B (FIPS 204)
+- **Test 3**: `TPM2_ReadPublic` → `TPM2_MakeCredential` → `TPM2_ActivateCredential` roundtrip via ML-KEM-768 EK — verifies CryptSecretEncrypt/Decrypt ML-KEM path; encryptedSecret.size = 1088 B (ML-KEM-768 ciphertext); recovered certInfo matches original credential
+- **Test 4**: `TPM2_SignDigest` with restricted ML-DSA AK → asserts `TPM_RC_ATTRIBUTES` (restriction enforced)
+- **Test 5**: `TPM2_CreatePrimary(ML-DSA-65 unrestricted)` + `TPM2_SignDigest` → verifies sigAlg = MLDSA, sig = 3309 B (FIPS 204); confirms `CryptSelectSignScheme` synthetic mldsaScheme path
+
+**`tests/crossval/CMakeLists.txt`**
+
+- Added `test_pqc_phase3` executable linking against `tpms`
+
+**`Makefile`**
+
+- Added `tests/crossval/build/test_pqc_phase3` to the `crossval` target run sequence
+
+**`tests/compliance/v185_compliance.sh`**
+
+- Added `Phase 3 — Key Hierarchy Dispatch` section: 6 source-level grep checks (CryptIsAsymAlgorithm ML-DSA/KEM, CryptSecretEncrypt/Decrypt, CryptSelectSignScheme synthetic scheme, SignDigest restriction guard)
+- Added `Phase 3 — Runtime Roundtrip` section: runs `test_pqc_phase3` with same SKIP logic as existing runtime sections
+
+**`docs/TPMdocextract.md`**
+
+- Added Section 13 with spec-authoritative wire formats for `TPM2_ReadPublic` (§12.4.2), `TPM2_MakeCredential` (§12.5.2), `TPM2_ActivateCredential` (§12.6.2), `TPM2_SignDigest` (§29.2.1) — including the restriction rule and TPMT_SIG_SCHEME NULL encoding notes
+
+### Phase 3 — PQC Key Hierarchy (Implementation)
 
 **Root cause fixes in `libtpms/src/tpm2/CryptUtil.c`**
 - `CryptIsAsymAlgorithm`: added `TPM_ALG_MLDSA`, `TPM_ALG_HASH_MLDSA`, `TPM_ALG_MLKEM` cases — unblocks `MakeCredential`, `ActivateCredential`, and `CryptSelectSignScheme` for all PQC key types

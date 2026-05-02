@@ -35,6 +35,13 @@
 #else
 # include <openssl/rsa.h>
 #endif
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+# include <openssl/x509.h>
+# include <openssl/x509v3.h>
+# include <openssl/pem.h>
+# include <openssl/asn1.h>
+# include <openssl/bio.h>
+#endif
 
 #include "swtpm.h"
 #include "swtpm_utils.h"
@@ -1287,15 +1294,18 @@ static int swtpm_tpm2_create_pqc_eks(struct swtpm *self, gboolean lock_nvram,
     if (ret != 0)
         return 1;
 
+    /* Persistence: TCG IWG has not finalised PQC EK persistent handles yet, so
+     * EvictControl is best-effort. Failure is logged but non-fatal — the pubkey
+     * is already captured for X.509 cert generation. */
     ret = swtpm_tpm2_evictcontrol(self, curr_handle, TPM2_EK_MLKEM768_HANDLE);
     if (ret != 0) {
-        logerr(self->logfile,
-               "Failed to persist ML-KEM-768 EK to handle 0x%x\n", TPM2_EK_MLKEM768_HANDLE);
-        swtpm_tpm2_flushcontext(self, curr_handle);
-        return 1;
+        logit(self->logfile,
+              "Note: ML-KEM-768 EK persistence skipped (handle 0x%x; PQC EK persistent "
+              "range pending TCG IWG spec).\n", TPM2_EK_MLKEM768_HANDLE);
+    } else {
+        logit(self->logfile, "Successfully created ML-KEM-768 EK with handle 0x%x.\n",
+              TPM2_EK_MLKEM768_HANDLE);
     }
-    logit(self->logfile, "Successfully created ML-KEM-768 EK with handle 0x%x.\n",
-          TPM2_EK_MLKEM768_HANDLE);
     swtpm_tpm2_flushcontext(self, curr_handle);
 
     /* ML-DSA-65 AK in Owner hierarchy */
@@ -1309,18 +1319,266 @@ static int swtpm_tpm2_create_pqc_eks(struct swtpm *self, gboolean lock_nvram,
 
     ret = swtpm_tpm2_evictcontrol(self, curr_handle, TPM2_EK_MLDSA65_HANDLE);
     if (ret != 0) {
-        logerr(self->logfile,
-               "Failed to persist ML-DSA-65 AK to handle 0x%x\n", TPM2_EK_MLDSA65_HANDLE);
-        swtpm_tpm2_flushcontext(self, curr_handle);
-        return 1;
+        logit(self->logfile,
+              "Note: ML-DSA-65 AK persistence skipped (handle 0x%x; PQC AK persistent "
+              "range pending TCG IWG spec).\n", TPM2_EK_MLDSA65_HANDLE);
+    } else {
+        logit(self->logfile, "Successfully created ML-DSA-65 AK with handle 0x%x.\n",
+              TPM2_EK_MLDSA65_HANDLE);
     }
-    logit(self->logfile, "Successfully created ML-DSA-65 AK with handle 0x%x.\n",
-          TPM2_EK_MLDSA65_HANDLE);
     swtpm_tpm2_flushcontext(self, curr_handle);
 
     (void)lock_nvram;  /* NV template storage pending TCG IWG PQC provisioning spec */
     return 0;
 }
+
+#if OPENSSL_VERSION_NUMBER >= 0x30500000L
+/* ── V1.85 PQC EK X.509 certificates ─────────────────────────────────────────
+ *
+ * Self-signed development certificates: subject SPKI is the TPM-resident
+ * ML-KEM-768 EK pubkey (or ML-DSA-65 AK pubkey); issuer is an ephemeral
+ * ML-DSA-65 CA generated per call. These are NOT trust anchors — they
+ * demonstrate the PQC X.509 path works end-to-end and give consumers an
+ * artifact to inspect with `openssl x509 -text`. Production trust chains
+ * await the TCG IWG PQC EK Credential Profile (in draft).
+ *
+ * NIST CSOR OIDs are registered automatically by OpenSSL 3.5+ once the
+ * EVP_PKEY is constructed with the right keytype name; we don't set them
+ * by hand. Hash algorithm = NULL (ML-DSA is hash-and-sign internally per
+ * FIPS 204 Algorithm 2).
+ */
+
+/* Hex string → newly-allocated byte buffer. Caller frees with g_free. */
+static unsigned char *swtpm_pqc_hex2bin(const gchar *hex, size_t *out_len)
+{
+    size_t hlen, blen, i;
+    unsigned char *out;
+
+    if (hex == NULL)
+        return NULL;
+    hlen = strlen(hex);
+    if (hlen == 0 || (hlen & 1))
+        return NULL;
+    blen = hlen / 2;
+    out = g_malloc(blen);
+    for (i = 0; i < blen; i++) {
+        unsigned int b;
+        if (sscanf(&hex[2 * i], "%2x", &b) != 1) {
+            g_free(out);
+            return NULL;
+        }
+        out[i] = (unsigned char)b;
+    }
+    *out_len = blen;
+    return out;
+}
+
+/* Generate an ephemeral ML-DSA-65 keypair for self-signing. */
+static EVP_PKEY *swtpm_pqc_gen_mldsa65(const gchar *logfile)
+{
+    EVP_PKEY_CTX *ctx;
+    EVP_PKEY *key = NULL;
+
+    ctx = EVP_PKEY_CTX_new_from_name(NULL, "ML-DSA-65", NULL);
+    if (ctx == NULL) {
+        logerr(logfile, "PQC EK cert: EVP_PKEY_CTX_new_from_name(ML-DSA-65) failed\n");
+        return NULL;
+    }
+    if (EVP_PKEY_keygen_init(ctx) <= 0 || EVP_PKEY_keygen(ctx, &key) <= 0) {
+        logerr(logfile, "PQC EK cert: ML-DSA-65 keygen failed\n");
+        key = NULL;
+    }
+    EVP_PKEY_CTX_free(ctx);
+    return key;
+}
+
+/* Build an EVP_PKEY from raw public-key bytes for the given keytype name. */
+static EVP_PKEY *swtpm_pqc_pkey_from_pub(const char *keytype,
+                                          const unsigned char *pub, size_t pub_len,
+                                          const gchar *logfile)
+{
+    EVP_PKEY_CTX *ctx;
+    EVP_PKEY *pkey = NULL;
+    OSSL_PARAM params[2];
+
+    ctx = EVP_PKEY_CTX_new_from_name(NULL, keytype, NULL);
+    if (ctx == NULL) {
+        logerr(logfile, "PQC EK cert: EVP_PKEY_CTX_new_from_name(%s) failed\n", keytype);
+        return NULL;
+    }
+    params[0] = OSSL_PARAM_construct_octet_string(OSSL_PKEY_PARAM_PUB_KEY,
+                                                  (void *)pub, pub_len);
+    params[1] = OSSL_PARAM_construct_end();
+    if (EVP_PKEY_fromdata_init(ctx) <= 0 ||
+        EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_PUBLIC_KEY, params) <= 0) {
+        logerr(logfile, "PQC EK cert: EVP_PKEY_fromdata(%s, %zu B) failed\n",
+               keytype, pub_len);
+        pkey = NULL;
+    }
+    EVP_PKEY_CTX_free(ctx);
+    return pkey;
+}
+
+/* Write a self-signed PQC X.509 cert (DER) to <certsdir>/<filename>. */
+static int swtpm_pqc_write_cert(const gchar *certsdir, const gchar *filename,
+                                const gchar *subject_keytype,
+                                const gchar *subject_cn,
+                                const unsigned char *subject_pub, size_t subject_pub_len,
+                                const gchar *logfile)
+{
+    EVP_PKEY *issuer_key = NULL;
+    EVP_PKEY *subject_key = NULL;
+    X509 *cert = NULL;
+    X509_NAME *issuer_name = NULL;
+    EVP_MD_CTX *md_ctx = NULL;
+    BIO *bio = NULL;
+    g_autofree gchar *path = NULL;
+    int ret = 1;
+
+    issuer_key = swtpm_pqc_gen_mldsa65(logfile);
+    if (issuer_key == NULL)
+        goto out;
+
+    subject_key = swtpm_pqc_pkey_from_pub(subject_keytype, subject_pub, subject_pub_len, logfile);
+    if (subject_key == NULL)
+        goto out;
+
+    cert = X509_new();
+    if (cert == NULL)
+        goto out;
+    if (X509_set_version(cert, 2) != 1)              /* X.509 v3 */
+        goto out;
+    if (ASN1_INTEGER_set(X509_get_serialNumber(cert), 1) != 1)
+        goto out;
+    if (X509_gmtime_adj(X509_getm_notBefore(cert), 0) == NULL)
+        goto out;
+    /* 10-year validity */
+    if (X509_gmtime_adj(X509_getm_notAfter(cert), (long)10 * 365 * 24 * 3600) == NULL)
+        goto out;
+    if (X509_set_pubkey(cert, subject_key) != 1)
+        goto out;
+
+    /* Subject = CN=<subject_cn>, O=pqctoday-tpm */
+    {
+        X509_NAME *subj = X509_get_subject_name(cert);
+        if (X509_NAME_add_entry_by_txt(subj, "CN", MBSTRING_ASC,
+                                       (const unsigned char *)subject_cn, -1, -1, 0) != 1 ||
+            X509_NAME_add_entry_by_txt(subj, "O", MBSTRING_ASC,
+                                       (const unsigned char *)"pqctoday-tpm", -1, -1, 0) != 1)
+            goto out;
+    }
+
+    /* Issuer = ephemeral PQC CA (different name to avoid CA self-test confusion) */
+    issuer_name = X509_NAME_new();
+    if (issuer_name == NULL)
+        goto out;
+    if (X509_NAME_add_entry_by_txt(issuer_name, "CN", MBSTRING_ASC,
+                                   (const unsigned char *)"pqctoday-tpm PQC EK CA (ephemeral)",
+                                   -1, -1, 0) != 1 ||
+        X509_NAME_add_entry_by_txt(issuer_name, "O", MBSTRING_ASC,
+                                   (const unsigned char *)"pqctoday-tpm", -1, -1, 0) != 1 ||
+        X509_set_issuer_name(cert, issuer_name) != 1)
+        goto out;
+
+    /* Sign with ML-DSA-65 — NULL hash (FIPS 204 §5.4 hash-and-sign internally) */
+    md_ctx = EVP_MD_CTX_new();
+    if (md_ctx == NULL)
+        goto out;
+    if (EVP_DigestSignInit_ex(md_ctx, NULL, NULL, NULL, NULL, issuer_key, NULL) <= 0) {
+        logerr(logfile, "PQC EK cert: EVP_DigestSignInit_ex(ML-DSA-65) failed\n");
+        goto out;
+    }
+    if (X509_sign_ctx(cert, md_ctx) == 0) {
+        logerr(logfile, "PQC EK cert: X509_sign_ctx failed\n");
+        goto out;
+    }
+
+    path = g_build_filename(certsdir, filename, NULL);
+    bio = BIO_new_file(path, "wb");
+    if (bio == NULL) {
+        logerr(logfile, "PQC EK cert: cannot open %s for writing\n", path);
+        goto out;
+    }
+    if (i2d_X509_bio(bio, cert) != 1) {
+        logerr(logfile, "PQC EK cert: i2d_X509_bio(%s) failed\n", path);
+        goto out;
+    }
+
+    logit(logfile, "PQC EK cert written: %s (subject=%s, issuer ML-DSA-65 ephemeral)\n",
+          path, subject_keytype);
+    ret = 0;
+
+out:
+    BIO_free(bio);
+    EVP_MD_CTX_free(md_ctx);
+    X509_NAME_free(issuer_name);
+    X509_free(cert);
+    EVP_PKEY_free(subject_key);
+    EVP_PKEY_free(issuer_key);
+    return ret;
+}
+
+static int swtpm_tpm2_pqc_write_ek_certs(struct swtpm *self,
+                                          const gchar *certsdir, const gchar *vmid,
+                                          const gchar *mlkem_ekparam,
+                                          const gchar *mldsa_akparam)
+{
+    g_autofree gchar *mlkem_cn = NULL;
+    g_autofree gchar *mldsa_cn = NULL;
+    g_autofree unsigned char *mlkem_pub = NULL;
+    g_autofree unsigned char *mldsa_pub = NULL;
+    size_t mlkem_pub_len = 0, mldsa_pub_len = 0;
+    int ret = 0;
+
+    if (certsdir == NULL)
+        return 0;  /* nothing to do */
+
+    if (mlkem_ekparam != NULL) {
+        mlkem_pub = swtpm_pqc_hex2bin(mlkem_ekparam, &mlkem_pub_len);
+        if (mlkem_pub == NULL || mlkem_pub_len != 1184) {
+            logerr(self->logfile,
+                   "PQC EK cert: invalid ML-KEM-768 pubkey hex (got %zu B, expected 1184)\n",
+                   mlkem_pub_len);
+            return 1;
+        }
+        mlkem_cn = g_strdup_printf("TPM EK (ML-KEM-768)%s%s",
+                                   vmid ? " " : "", vmid ? vmid : "");
+        if (swtpm_pqc_write_cert(certsdir, "mlkem_ek.cert",
+                                 "ML-KEM-768", mlkem_cn,
+                                 mlkem_pub, mlkem_pub_len, self->logfile) != 0)
+            ret = 1;
+    }
+
+    if (mldsa_akparam != NULL) {
+        mldsa_pub = swtpm_pqc_hex2bin(mldsa_akparam, &mldsa_pub_len);
+        if (mldsa_pub == NULL || mldsa_pub_len != 1952) {
+            logerr(self->logfile,
+                   "PQC EK cert: invalid ML-DSA-65 pubkey hex (got %zu B, expected 1952)\n",
+                   mldsa_pub_len);
+            return 1;
+        }
+        mldsa_cn = g_strdup_printf("TPM AK (ML-DSA-65)%s%s",
+                                   vmid ? " " : "", vmid ? vmid : "");
+        if (swtpm_pqc_write_cert(certsdir, "mldsa_ak.cert",
+                                 "ML-DSA-65", mldsa_cn,
+                                 mldsa_pub, mldsa_pub_len, self->logfile) != 0)
+            ret = 1;
+    }
+
+    return ret;
+}
+#else  /* OPENSSL_VERSION_NUMBER < 0x30500000L */
+static int swtpm_tpm2_pqc_write_ek_certs(struct swtpm *self,
+                                          const gchar *certsdir, const gchar *vmid,
+                                          const gchar *mlkem_ekparam,
+                                          const gchar *mldsa_akparam)
+{
+    (void)certsdir; (void)vmid; (void)mlkem_ekparam; (void)mldsa_akparam;
+    logit(self->logfile,
+          "PQC EK cert: skipped — OpenSSL 3.5+ required for ML-DSA/ML-KEM cert generation\n");
+    return 0;
+}
+#endif
 
 static int swtpm_tpm2_createprimary_spk_ecc_nist_p384(struct swtpm *self,
                                                       uint32_t *curr_handle)
@@ -1748,6 +2006,7 @@ static const struct swtpm2_ops swtpm_tpm2_ops = {
     .create_spk = swtpm_tpm2_create_spk,
     .create_ek = swtpm_tpm2_create_ek,
     .create_pqc_eks = swtpm_tpm2_create_pqc_eks,
+    .pqc_write_ek_certs = swtpm_tpm2_pqc_write_ek_certs,
     .get_all_pcr_banks = swtpm_tpm2_get_all_pcr_banks,
     .set_active_pcr_banks = swtpm_tpm2_set_active_pcr_banks,
     .write_ek_cert_nvram = swtpm_tpm2_write_ek_cert_nvram,

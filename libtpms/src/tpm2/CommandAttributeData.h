@@ -460,6 +460,40 @@ const TPMA_CC    s_ccAttr [] = {
 #if (PAD_LIST || CC_SetCapability)
     TPMA_CC_INITIALIZER(0x019F, 0, 1, 0, 0, 1, 0, 0, 0),
 #endif
+/* V1.85 PQC commands — 0x01A0 through 0x01AA */
+#if (PAD_LIST)
+    TPMA_CC_INITIALIZER(0x01A0, 0, 0, 0, 0, 0, 0, 0, 0),  // reserved
+#endif
+#if (PAD_LIST)
+    TPMA_CC_INITIALIZER(0x01A1, 0, 0, 0, 0, 0, 0, 0, 0),  // reserved
+#endif
+#if (PAD_LIST)
+    TPMA_CC_INITIALIZER(0x01A2, 0, 0, 0, 0, 0, 0, 0, 0),  // reserved
+#endif
+#if (PAD_LIST || CC_VerifySequenceComplete)
+    TPMA_CC_INITIALIZER(0x01A3, 0, 0, 0, 0, 1, 0, 0, 0),  // Phase 4
+#endif
+#if (PAD_LIST || CC_SignSequenceComplete)
+    TPMA_CC_INITIALIZER(0x01A4, 0, 0, 0, 0, 1, 0, 0, 0),  // Phase 4
+#endif
+#if (PAD_LIST || CC_VerifyDigestSignature)
+    TPMA_CC_INITIALIZER(0x01A5, 0, 0, 0, 0, 1, 0, 0, 0),  // live
+#endif
+#if (PAD_LIST || CC_SignDigest)
+    TPMA_CC_INITIALIZER(0x01A6, 0, 0, 0, 0, 1, 0, 0, 0),  // live
+#endif
+#if (PAD_LIST || CC_Encapsulate)
+    TPMA_CC_INITIALIZER(0x01A7, 0, 0, 0, 0, 1, 0, 0, 0),  // live
+#endif
+#if (PAD_LIST || CC_Decapsulate)
+    TPMA_CC_INITIALIZER(0x01A8, 0, 0, 0, 0, 1, 0, 0, 0),  // live
+#endif
+#if (PAD_LIST || CC_VerifySequenceStart)
+    TPMA_CC_INITIALIZER(0x01A9, 0, 0, 0, 0, 1, 0, 0, 0),  // Phase 4
+#endif
+#if (PAD_LIST || CC_SignSequenceStart)
+    TPMA_CC_INITIALIZER(0x01AA, 0, 0, 0, 0, 1, 0, 0, 0),  // Phase 4
+#endif
 #if (PAD_LIST  || CC_Vendor_TCG_Test)
     TPMA_CC_INITIALIZER(0x0000, 0, 0, 0, 0, 0, 0, 1, 0),
 #endif
@@ -980,6 +1014,48 @@ const COMMAND_ATTRIBUTES    s_commandAttributes [] = {
 #if (PAD_LIST || CC_SetCapability)
     (COMMAND_ATTRIBUTES)(CC_SetCapability * 		// 0x019F
 			 (IS_IMPLEMENTED+DECRYPT_2+HANDLE_1_USER)),
+#endif
+/* V1.85 PQC commands — 0x01A0 through 0x01AA */
+#if (PAD_LIST)
+    (COMMAND_ATTRIBUTES)(0),                               // 0x01A0 reserved
+#endif
+#if (PAD_LIST)
+    (COMMAND_ATTRIBUTES)(0),                               // 0x01A1 reserved
+#endif
+#if (PAD_LIST)
+    (COMMAND_ATTRIBUTES)(0),                               // 0x01A2 reserved
+#endif
+#if (PAD_LIST || CC_VerifySequenceComplete)
+    (COMMAND_ATTRIBUTES)(CC_VerifySequenceComplete *	   // 0x01A3 Phase 4
+			 (IS_IMPLEMENTED+HANDLE_1_USER+DECRYPT_2)),
+#endif
+#if (PAD_LIST || CC_SignSequenceComplete)
+    (COMMAND_ATTRIBUTES)(CC_SignSequenceComplete *	   // 0x01A4 Phase 4
+			 (IS_IMPLEMENTED+DECRYPT_2+HANDLE_1_USER)),
+#endif
+#if (PAD_LIST || CC_VerifyDigestSignature)
+    (COMMAND_ATTRIBUTES)(CC_VerifyDigestSignature *	   // 0x01A5
+			 (IS_IMPLEMENTED+DECRYPT_2)),
+#endif
+#if (PAD_LIST || CC_SignDigest)
+    (COMMAND_ATTRIBUTES)(CC_SignDigest *		   // 0x01A6
+			 (IS_IMPLEMENTED+DECRYPT_2+HANDLE_1_USER)),
+#endif
+#if (PAD_LIST || CC_Encapsulate)
+    (COMMAND_ATTRIBUTES)(CC_Encapsulate *		   // 0x01A7
+			 (IS_IMPLEMENTED+ENCRYPT_2)),
+#endif
+#if (PAD_LIST || CC_Decapsulate)
+    (COMMAND_ATTRIBUTES)(CC_Decapsulate *		   // 0x01A8
+			 (IS_IMPLEMENTED+DECRYPT_2+HANDLE_1_USER+ENCRYPT_2)),
+#endif
+#if (PAD_LIST || CC_VerifySequenceStart)
+    (COMMAND_ATTRIBUTES)(CC_VerifySequenceStart *	   // 0x01A9 Phase 4
+			 (IS_IMPLEMENTED+HANDLE_1_USER)),
+#endif
+#if (PAD_LIST || CC_SignSequenceStart)
+    (COMMAND_ATTRIBUTES)(CC_SignSequenceStart *		   // 0x01AA Phase 4
+			 (IS_IMPLEMENTED+HANDLE_1_USER)),
 #endif
 #if (PAD_LIST  || CC_Vendor_TCG_Test)
     (COMMAND_ATTRIBUTES)(CC_Vendor_TCG_Test          *  // 0x0000

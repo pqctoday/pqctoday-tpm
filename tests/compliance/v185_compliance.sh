@@ -33,6 +33,7 @@ TPMPROF="libtpms/src/tpm2/TpmProfile_Common.h"
 TPMLIBCONF="libtpms/src/tpm_library_conf.h"
 CROSSVAL_BIN="tests/crossval/build/test_pqc_crossval"
 ROUNDTRIP_BIN="tests/crossval/build/test_tpm_roundtrip"
+PHASE3_BIN="tests/crossval/build/test_pqc_phase3"
 
 PASS=0; FAIL=0; SKIP=0
 
@@ -438,6 +439,61 @@ elif [[ -x "$ROUNDTRIP_BIN" ]]; then
     fi
 else
     skip "test_tpm_roundtrip not built — run 'make crossval-build' first"
+fi
+
+# ----------------------------------------------------------------------------
+# Phase 3 — Key hierarchy dispatch (source checks)
+# CryptIsAsymAlgorithm, CryptSecretEncrypt/Decrypt ML-KEM paths
+# ----------------------------------------------------------------------------
+
+section "Phase 3 — Key Hierarchy Dispatch (CryptUtil.c source checks)"
+
+CRYPTUTIL="libtpms/src/tpm2/CryptUtil.c"
+PQCMLDSA="libtpms/src/tpm2/PqcMlDsaCommands.c"
+
+# CryptIsAsymAlgorithm must handle MLDSA and MLKEM (unblocks MakeCredential, ActivateCredential)
+grep -q "case TPM_ALG_MLDSA:" "$CRYPTUTIL"  && pass "CryptIsAsymAlgorithm: TPM_ALG_MLDSA case present" \
+                                             || fail "CryptIsAsymAlgorithm: TPM_ALG_MLDSA case missing"
+grep -q "case TPM_ALG_MLKEM:" "$CRYPTUTIL"  && pass "CryptIsAsymAlgorithm: TPM_ALG_MLKEM case present" \
+                                             || fail "CryptIsAsymAlgorithm: TPM_ALG_MLKEM case missing"
+
+# CryptSecretEncrypt ML-KEM path (MakeCredential transport)
+grep -q "CryptMlKemEncapsulate" "$CRYPTUTIL" && pass "CryptSecretEncrypt: CryptMlKemEncapsulate present (ML-KEM seed)" \
+                                              || fail "CryptSecretEncrypt: CryptMlKemEncapsulate missing"
+
+# CryptSecretDecrypt ML-KEM path (ActivateCredential transport)
+grep -q "CryptMlKemDecapsulate" "$CRYPTUTIL" && pass "CryptSecretDecrypt: CryptMlKemDecapsulate present (ML-KEM seed)" \
+                                              || fail "CryptSecretDecrypt: CryptMlKemDecapsulate missing"
+
+# CryptSelectSignScheme: synthetic mldsaScheme for ML-DSA keys (TPM2_Quote path)
+grep -q "mldsaScheme" "$CRYPTUTIL"           && pass "CryptSelectSignScheme: synthetic mldsaScheme present for ML-DSA" \
+                                             || fail "CryptSelectSignScheme: mldsaScheme missing"
+
+# TPM2_SignDigest: restricted key check present (V1.85 §29.2.1)
+grep -q "TPMA_OBJECT.*restricted" "$PQCMLDSA" && pass "TPM2_SignDigest: restricted-key guard present (§29.2.1)" \
+                                               || fail "TPM2_SignDigest: restricted-key guard missing"
+
+# Phase 3 — Runtime roundtrip (test_pqc_phase3)
+section "Phase 3 — Runtime Roundtrip (test_pqc_phase3)"
+
+if [[ "$(uname -s)" == "Darwin" ]] && [[ -x "$PHASE3_BIN" ]] && ! "$PHASE3_BIN" --help >/dev/null 2>&1; then
+    skip "test_pqc_phase3 is Linux ELF — run inside Docker (make compliance)"
+elif [[ -x "$PHASE3_BIN" ]]; then
+    if "$PHASE3_BIN" > /tmp/phase3.out 2>&1; then
+        ph3_pass=$(grep -c "^\[PASS\]" /tmp/phase3.out 2>/dev/null) || ph3_pass=0
+        ph3_fail=$(grep -c "^\[FAIL\]" /tmp/phase3.out 2>/dev/null) || ph3_fail=0
+        if [[ "$ph3_fail" == "0" ]]; then
+            pass "Phase 3 roundtrip: $ph3_pass subtests green (ML-KEM-768 EK + ML-DSA-65 AK + MakeCredential + SignDigest)"
+        else
+            fail "Phase 3 roundtrip: $ph3_fail subtests FAILED"
+            sed 's/^/         /' /tmp/phase3.out
+        fi
+    else
+        fail "test_pqc_phase3 exited non-zero"
+        sed 's/^/         /' /tmp/phase3.out
+    fi
+else
+    skip "test_pqc_phase3 not built — run 'make crossval-build' first"
 fi
 
 # ----------------------------------------------------------------------------

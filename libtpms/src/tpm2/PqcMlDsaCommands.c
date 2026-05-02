@@ -51,6 +51,13 @@ TPM2_SignDigest(SignDigest_In *in, SignDigest_Out *out)
        && signObject->publicArea.type != TPM_ALG_HASH_MLDSA)
         return TPM_RCS_ATTRIBUTES + RC_SignDigest_keyHandle;
 
+    /* Restricted signing keys may only sign TPM-attested hashes (TPM2_Sign + hashcheck
+     * ticket).  TPM2_SignDigest takes an arbitrary digest with no ticket, so it must
+     * reject restricted keys to preserve the restriction security property.
+     * V1.85 §29.2.1; Part 1 §22.1.2. */
+    if(IS_ATTRIBUTE(signObject->publicArea.objectAttributes, TPMA_OBJECT, restricted))
+        return TPM_RCS_ATTRIBUTES + RC_SignDigest_keyHandle;
+
     if(!CryptSelectSignScheme(signObject, &in->inScheme))
         return TPM_RCS_SCHEME + RC_SignDigest_inScheme;
 

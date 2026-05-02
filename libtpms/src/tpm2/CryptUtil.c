@@ -721,7 +721,12 @@ CryptSecretEncrypt(OBJECT*      encryptKey,  // IN: encryption key object
 		  result = CryptMlKemEncapsulate(&ss, &ct, encryptKey, NULL);
 		  if(result == TPM_RC_SUCCESS)
 		      {
-			  if(ct.t.size > sizeof(secret->t.secret))
+			  /* Guard: ciphertext must fit in TPMU_ENCRYPTED_SECRET.mlkem.
+			   * Use MAX_MLKEM_CT_SIZE (a compile-time #define) rather than
+			   * sizeof(secret->t.secret) to avoid stale-object sensitivity —
+			   * if TPMU_ENCRYPTED_SECRET was compiled without the mlkem member
+			   * the sizeof path would incorrectly fire for valid 1088-byte CTs. */
+			  if(ct.t.size > MAX_MLKEM_CT_SIZE)
 			      result = TPM_RC_VALUE;
 			  else
 			      {

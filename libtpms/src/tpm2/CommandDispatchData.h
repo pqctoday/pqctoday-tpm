@@ -5099,6 +5099,17 @@ COMMAND_DESCRIPTOR_t *s_CommandDataArray[] = {
 #if (PAD_LIST || CC_SetCapability)
     (COMMAND_DESCRIPTOR_t*)_SetCapabilityDataAddress,
 #endif // CC_SetCapability
+/* Reserved slots 0x1A0–0x1A2 (ADD_FILL entries; no CC_ flag, always present per
+ * TpmAlgorithmDefines.h LIBRARY_COMMAND_ARRAY_SIZE) */
+#if (PAD_LIST)
+    (COMMAND_DESCRIPTOR_t *)0,  /* 0x1A0 reserved */
+#endif
+#if (PAD_LIST)
+    (COMMAND_DESCRIPTOR_t *)0,  /* 0x1A1 reserved */
+#endif
+#if (PAD_LIST)
+    (COMMAND_DESCRIPTOR_t *)0,  /* 0x1A2 reserved */
+#endif
 /* V1.85 PQC commands 0x1A3–0x1AA */
 #if (PAD_LIST || CC_VerifySequenceComplete)
     (COMMAND_DESCRIPTOR_t*)_VerifySequenceCompleteDataAddress,

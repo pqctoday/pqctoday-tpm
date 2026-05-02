@@ -472,14 +472,25 @@ static int tpm2_create_eks_and_certs(unsigned long flags, const gchar *config_fi
          return 1;
 
      /* 3rd+4th: V1.85 PQC EKs — ML-KEM-768 EK + ML-DSA-65 AK.
-      * Non-fatal: older libtpms builds without V1.85 PQC will return an error here. */
+      * Non-fatal: older libtpms builds without V1.85 PQC will return an error here.
+      * If --create-ek-cert was requested, also write self-signed PQC X.509 certs to certsdir. */
      if (swtpm2->ops->create_pqc_eks) {
          g_autofree gchar *mlkem_ekparam = NULL;
          g_autofree gchar *mldsa_akparam = NULL;
          if (swtpm2->ops->create_pqc_eks(&swtpm2->swtpm, !!(flags & SETUP_LOCK_NVRAM_F),
-                                         &mlkem_ekparam, &mldsa_akparam) != 0)
+                                         &mlkem_ekparam, &mldsa_akparam) != 0) {
              logit(gl_LOGFILE,
                    "Note: PQC EK provisioning skipped (V1.85 support not available).\n");
+         } else if ((flags & SETUP_EK_CERT_F) && swtpm2->ops->pqc_write_ek_certs) {
+             /* Write straight to user_certsdir if specified, else fall back to
+              * the internal staging dir (where TPM 1.2 / RSA / ECC drop their
+              * intermediates). */
+             const gchar *outdir = user_certsdir ? user_certsdir : certsdir;
+             if (swtpm2->ops->pqc_write_ek_certs(&swtpm2->swtpm, outdir, vmid,
+                                                  mlkem_ekparam, mldsa_akparam) != 0)
+                 logit(gl_LOGFILE,
+                       "Note: PQC EK X.509 cert generation failed (non-fatal).\n");
+         }
      }
 
      return 0;

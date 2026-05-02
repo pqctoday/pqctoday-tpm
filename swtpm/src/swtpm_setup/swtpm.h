@@ -52,6 +52,11 @@ struct swtpm2_ops {
     /* V1.85 PQC: create ML-KEM-768 EK + ML-DSA-65 AK and evict to persistent handles */
     int (*create_pqc_eks)(struct swtpm *self, gboolean lock_nvram,
                           gchar **mlkem_ekparam, gchar **mldsa_akparam);
+    /* V1.85 PQC: write self-signed X.509 EK certs (ML-KEM-768 SPKI signed with
+     * ephemeral ML-DSA-65 issuer) to <certsdir>/mlkem_ek.cert and mldsa_ak.cert.
+     * Pass NULL certsdir to skip. Requires OpenSSL 3.5+. */
+    int (*pqc_write_ek_certs)(struct swtpm *self, const gchar *certsdir, const gchar *vmid,
+                              const gchar *mlkem_ekparam, const gchar *mldsa_akparam);
     int (*get_all_pcr_banks)(struct swtpm *self, gchar ***all_pcr_banks);
     int (*set_active_pcr_banks)(struct swtpm *self, gchar **pcr_banks_l, gchar **all_pcr_banks,
                                 gchar ***active);

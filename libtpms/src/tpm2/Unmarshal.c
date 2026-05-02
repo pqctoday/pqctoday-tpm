@@ -1570,6 +1570,12 @@ TPMI_ALG_SIG_SCHEME_Unmarshal(TPMI_ALG_SIG_SCHEME *target, BYTE **buffer, INT32 
 #if ALG_ECSCHNORR
 	  case TPM_ALG_ECSCHNORR:
 #endif
+#if ALG_MLDSA
+	  case TPM_ALG_MLDSA:
+#endif
+#if ALG_HASH_MLDSA
+	  case TPM_ALG_HASH_MLDSA:
+#endif
 	    if (!RuntimeAlgorithmCheckEnabled(&g_RuntimeProfile.RuntimeAlgorithm,	// libtpms added begin
 					      *target)) {
 		rc = TPM_RC_SCHEME;
@@ -2017,7 +2023,7 @@ TPMT_TK_CREATION_Unmarshal(TPMT_TK_CREATION *target, BYTE **buffer, INT32 *size)
     return rc;
 }
 
-/* Table 89 - Definition of TPMT_TK_VERIFIED Structure */
+/* Table 89/112 - Definition of TPMT_TK_VERIFIED Structure (V1.85 updated) */
 
 TPM_RC
 TPMT_TK_VERIFIED_Unmarshal(TPMT_TK_VERIFIED *target, BYTE **buffer, INT32 *size)
@@ -2029,7 +2035,9 @@ TPMT_TK_VERIFIED_Unmarshal(TPMT_TK_VERIFIED *target, BYTE **buffer, INT32 *size)
 	rc = TPM_ST_Unmarshal(&target->tag, buffer, size);
     }
     if (rc == TPM_RC_SUCCESS) {
-	if (target->tag != TPM_ST_VERIFIED) {
+	if (target->tag != TPM_ST_VERIFIED &&
+	    target->tag != TPM_ST_MESSAGE_VERIFIED &&
+	    target->tag != TPM_ST_DIGEST_VERIFIED) {
 	    rc = TPM_RC_TAG;
 	    target->tag = orig_tag; // libtpms added
 	}
@@ -2037,8 +2045,12 @@ TPMT_TK_VERIFIED_Unmarshal(TPMT_TK_VERIFIED *target, BYTE **buffer, INT32 *size)
     if (rc == TPM_RC_SUCCESS) {
 	rc = TPMI_RH_HIERARCHY_Unmarshal(&target->hierarchy, buffer, size, YES);
     }
+    /* V1.85 §10.6.5: [tag]metadata — only present for TPM_ST_DIGEST_VERIFIED */
+    if (rc == TPM_RC_SUCCESS && target->tag == TPM_ST_DIGEST_VERIFIED) {
+	rc = TPM_ALG_ID_Unmarshal(&target->metadata.digestVerified, buffer, size);
+    }
     if (rc == TPM_RC_SUCCESS) {
-	rc = TPM2B_DIGEST_Unmarshal(&target->digest, buffer, size);
+	rc = TPM2B_DIGEST_Unmarshal(&target->hmac, buffer, size);
     }
     return rc;
 }
@@ -4104,7 +4116,59 @@ TPMS_MLKEM_PARMS_Unmarshal(TPMS_MLKEM_PARMS *target, BYTE **buffer, INT32 *size)
 {
     return TPMI_MLKEM_PARAMETER_SET_Unmarshal(&target->parameterSet, buffer, size);
 }
+
+/* Table 2:99 §10.3.12 — TPM2B_SHARED_SECRET */
+TPM_RC
+TPM2B_SHARED_SECRET_Unmarshal(TPM2B_SHARED_SECRET *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_SHARED_SECRET_SIZE, buffer, size);
+}
+
+/* Table 2:101 §10.3.14 — TPM2B_KEM_CIPHERTEXT */
+TPM_RC
+TPM2B_KEM_CIPHERTEXT_Unmarshal(TPM2B_KEM_CIPHERTEXT *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, sizeof(TPMU_KEM_CIPHERTEXT), buffer, size);
+}
 #endif /* ALG_MLKEM */
+
+/* ── V1.85 new ML-DSA signature and context types ────────────────────────── */
+#if ALG_MLDSA || ALG_HASH_MLDSA
+
+/* Table 2:216 §11.3.4 */
+TPM_RC
+TPM2B_SIGNATURE_MLDSA_Unmarshal(TPM2B_SIGNATURE_MLDSA *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_MLDSA_SIG_SIZE, buffer, size);
+}
+
+/* Table 2:208 §11.2.7.2 */
+TPM_RC
+TPMS_SIGNATURE_HASH_MLDSA_Unmarshal(TPMS_SIGNATURE_HASH_MLDSA *target, BYTE **buffer, INT32 *size)
+{
+    TPM_RC rc = TPM_RC_SUCCESS;
+    if (rc == TPM_RC_SUCCESS)
+	rc = TPMI_ALG_HASH_Unmarshal(&target->hash, buffer, size, NO);
+    if (rc == TPM_RC_SUCCESS)
+	rc = TPM2B_SIGNATURE_MLDSA_Unmarshal(&target->signature, buffer, size);
+    return rc;
+}
+
+/* Table 2:220 §11.3.8 */
+TPM_RC
+TPM2B_SIGNATURE_CTX_Unmarshal(TPM2B_SIGNATURE_CTX *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_SIG_CTX_BYTES, buffer, size);
+}
+
+/* Table 2:221 §11.3.9 */
+TPM_RC
+TPM2B_SIGNATURE_HINT_Unmarshal(TPM2B_SIGNATURE_HINT *target, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Unmarshal(&target->b, MAX_SIGNATURE_HINT_SIZE, buffer, size);
+}
+
+#endif /* ALG_MLDSA || ALG_HASH_MLDSA */
 
 /* Table 161 - Definition of {ECC} TPM2B_ECC_PARAMETER Structure */
 
@@ -4412,6 +4476,16 @@ TPMU_SIGNATURE_Unmarshal(TPMU_SIGNATURE *target, BYTE **buffer, INT32 *size, UIN
 #if ALG_HMAC
       case TPM_ALG_HMAC:
 	rc = TPMT_HA_Unmarshal(&target->hmac, buffer, size, NO);
+	break;
+#endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	rc = TPM2B_SIGNATURE_MLDSA_Unmarshal(&target->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	rc = TPMS_SIGNATURE_HASH_MLDSA_Unmarshal(&target->hash_mldsa, buffer, size);
 	break;
 #endif
       case TPM_ALG_NULL:

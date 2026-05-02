@@ -203,12 +203,10 @@ CryptMlKemGenerateKey(TPMT_PUBLIC    *publicArea,
 /* ------------------------------------------------------------------------ */
 
 LIB_EXPORT TPM_RC
-CryptMlKemEncapsulate(BYTE       *sharedSecret,
-                      UINT16     *sharedSecretSize,
-                      BYTE       *ciphertext,
-                      UINT16     *ciphertextSize,
-                      OBJECT     *kemKey,
-                      RAND_STATE *rand)
+CryptMlKemEncapsulate(TPM2B_SHARED_SECRET  *sharedSecret,
+                      TPM2B_KEM_CIPHERTEXT *ciphertext,
+                      OBJECT               *kemKey,
+                      RAND_STATE           *rand)
 {
     TPM_RC                    result    = TPM_RC_FAILURE;
     TPMT_PUBLIC              *pub       = &kemKey->publicArea;
@@ -216,13 +214,17 @@ CryptMlKemEncapsulate(BYTE       *sharedSecret,
     const char               *algName   = CryptMlKemAlgName(paramSet);
     EVP_PKEY                 *pkey      = NULL;
     EVP_PKEY_CTX             *ctx       = NULL;
-    size_t                    ctLen     = 0;
-    size_t                    ssLen     = 0;
+    size_t                    ctLen     = sizeof(ciphertext->t.buffer);
+    size_t                    ssLen     = sizeof(sharedSecret->t.buffer);
+    UINT16                    expectedCt;
 
-    (void)rand;  /* ML-KEM encap randomness comes from OpenSSL's RNG — caller
-                  * seeds the library context for deterministic tests. */
+    (void)rand;  /* ML-KEM encap randomness comes from OpenSSL's RNG */
 
     if (algName == NULL)
+        return TPM_RC_SCHEME;
+
+    expectedCt = CryptMlKemCtSize(paramSet);
+    if (expectedCt == 0)
         return TPM_RC_SCHEME;
 
     pkey = PkeyFromPub(algName, pub->unique.mlkem.t.buffer, pub->unique.mlkem.t.size);
@@ -233,18 +235,18 @@ CryptMlKemEncapsulate(BYTE       *sharedSecret,
     if (ctx == NULL) goto cleanup;
     if (EVP_PKEY_encapsulate_init(ctx, NULL) <= 0) goto cleanup;
 
-    /* Query sizes. */
-    if (EVP_PKEY_encapsulate(ctx, NULL, &ctLen, NULL, &ssLen) <= 0) goto cleanup;
-    if (ctLen > *ciphertextSize || ssLen > *sharedSecretSize) {
+    if (EVP_PKEY_encapsulate(ctx,
+                             ciphertext->t.buffer, &ctLen,
+                             sharedSecret->t.buffer, &ssLen) <= 0)
+        goto cleanup;
+
+    if (ctLen != expectedCt || ssLen != MLKEM_SHARED_SECRET_SIZE) {
         result = TPM_RC_SIZE;
         goto cleanup;
     }
 
-    if (EVP_PKEY_encapsulate(ctx, ciphertext, &ctLen, sharedSecret, &ssLen) <= 0)
-        goto cleanup;
-
-    *ciphertextSize   = (UINT16)ctLen;
-    *sharedSecretSize = (UINT16)ssLen;
+    ciphertext->t.size   = (UINT16)ctLen;
+    sharedSecret->t.size = (UINT16)ssLen;
     result = TPM_RC_SUCCESS;
 
  cleanup:
@@ -258,11 +260,9 @@ CryptMlKemEncapsulate(BYTE       *sharedSecret,
 /* ------------------------------------------------------------------------ */
 
 LIB_EXPORT TPM_RC
-CryptMlKemDecapsulate(BYTE       *sharedSecret,
-                      UINT16     *sharedSecretSize,
-                      const BYTE *ciphertext,
-                      UINT16      ciphertextSize,
-                      OBJECT     *kemKey)
+CryptMlKemDecapsulate(TPM2B_SHARED_SECRET        *sharedSecret,
+                      const TPM2B_KEM_CIPHERTEXT *ciphertext,
+                      OBJECT                     *kemKey)
 {
     TPM_RC                    result    = TPM_RC_FAILURE;
     TPMT_PUBLIC              *pub       = &kemKey->publicArea;
@@ -270,10 +270,15 @@ CryptMlKemDecapsulate(BYTE       *sharedSecret,
     const char               *algName   = CryptMlKemAlgName(paramSet);
     EVP_PKEY                 *pkey      = NULL;
     EVP_PKEY_CTX             *ctx       = NULL;
-    size_t                    ssLen     = 0;
+    size_t                    ssLen     = sizeof(sharedSecret->t.buffer);
+    UINT16                    expectedCt;
 
     if (algName == NULL)
         return TPM_RC_SCHEME;
+
+    expectedCt = CryptMlKemCtSize(paramSet);
+    if (ciphertext->t.size != expectedCt)
+        return TPM_RC_SIZE;
 
     pkey = PkeyFromSeed(algName,
                         kemKey->sensitive.sensitive.mlkem.t.buffer,
@@ -285,16 +290,17 @@ CryptMlKemDecapsulate(BYTE       *sharedSecret,
     if (ctx == NULL) goto cleanup;
     if (EVP_PKEY_decapsulate_init(ctx, NULL) <= 0) goto cleanup;
 
-    if (EVP_PKEY_decapsulate(ctx, NULL, &ssLen, ciphertext, ciphertextSize) <= 0)
+    if (EVP_PKEY_decapsulate(ctx,
+                             sharedSecret->t.buffer, &ssLen,
+                             ciphertext->t.buffer, ciphertext->t.size) <= 0)
         goto cleanup;
-    if (ssLen > *sharedSecretSize) {
+
+    if (ssLen != MLKEM_SHARED_SECRET_SIZE) {
         result = TPM_RC_SIZE;
         goto cleanup;
     }
-    if (EVP_PKEY_decapsulate(ctx, sharedSecret, &ssLen, ciphertext, ciphertextSize) <= 0)
-        goto cleanup;
 
-    *sharedSecretSize = (UINT16)ssLen;
+    sharedSecret->t.size = (UINT16)ssLen;
     result = TPM_RC_SUCCESS;
 
  cleanup:

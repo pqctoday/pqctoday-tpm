@@ -349,6 +349,17 @@
 					  + (ADD_FILL || CC_NV_DefineSpace2)                      /* 0x0000019D */ \
 					  + (ADD_FILL || CC_NV_ReadPublic2)                       /* 0x0000019E */ \
 					  + (ADD_FILL || CC_SetCapability)                        /* 0x0000019F */ \
+					  +  ADD_FILL                                             /* 0x000001A0 */ \
+					  +  ADD_FILL                                             /* 0x000001A1 */ \
+					  +  ADD_FILL                                             /* 0x000001A2 — RESERVED */ \
+					  + (ADD_FILL || CC_VerifySequenceComplete)               /* 0x000001A3 */ \
+					  + (ADD_FILL || CC_SignSequenceComplete)                 /* 0x000001A4 */ \
+					  + (ADD_FILL || CC_VerifyDigestSignature)                /* 0x000001A5 */ \
+					  + (ADD_FILL || CC_SignDigest)                           /* 0x000001A6 */ \
+					  + (ADD_FILL || CC_Encapsulate)                         /* 0x000001A7 */ \
+					  + (ADD_FILL || CC_Decapsulate)                         /* 0x000001A8 */ \
+					  + (ADD_FILL || CC_VerifySequenceStart)                  /* 0x000001A9 */ \
+					  + (ADD_FILL || CC_SignSequenceStart)                    /* 0x000001AA */ \
 					  )
 
 #define VENDOR_COMMAND_ARRAY_SIZE   (0 + CC_Vendor_TCG_Test)
@@ -439,6 +450,7 @@ typedef TPM2B_MAX_HASH_BLOCK    TPM2B_HASH_BLOCK;
 /* Domain separation context for ML-DSA sign/verify — V1.85 Table 211. */
 #if ALG_MLDSA || ALG_HASH_MLDSA
 #define MAX_SIGNATURE_CTX_SIZE           255
+#define MAX_SIGNATURE_HINT_SIZE          256  /* §11.3.9 Table 221 — impl-dependent; 256 matches wolfTPM */
 #endif
 
 #endif // _TPM_ALGORITHM_DEFINES_H_

@@ -191,10 +191,19 @@ static const struct {
     COMMAND(NV_DefineSpace2, true, 0), // not supported
     COMMAND(NV_ReadPublic2, true, 0), // not supported
     COMMAND(SetCapability, true, 0), // not supported
+    /* V1.85 PQC commands */
+    COMMAND(VerifySequenceComplete, true, 0), // Phase 4
+    COMMAND(SignSequenceComplete,   true, 0), // Phase 4
+    COMMAND(VerifyDigestSignature,  true, 1), // live — ML-DSA / HashML-DSA verify-digest
+    COMMAND(SignDigest,             true, 1), // live — ML-DSA / HashML-DSA sign-digest
+    COMMAND(Encapsulate,           true, 1), // live — ML-KEM encapsulate
+    COMMAND(Decapsulate,           true, 1), // live — ML-KEM decapsulate
+    COMMAND(VerifySequenceStart,   true, 0), // Phase 4
+    COMMAND(SignSequenceStart,     true, 0), // Phase 4
     /* all new commands added here MUST have CAN_BE_DISABLE = true */
 #undef COMMAND
 };
-MUST_BE(TPM_CC_LAST == TPM_CC_SetCapability); /* force update of above list when new commands added */
+MUST_BE(TPM_CC_LAST == TPM_CC_SignSequenceStart); /* force update of above list when new commands added */
 
 static void
 RuntimeCommandsEnableAllCommands(struct RuntimeCommands *RuntimeCommands,

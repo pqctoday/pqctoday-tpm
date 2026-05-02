@@ -36,23 +36,20 @@ LIB_EXPORT TPM_RC CryptMlKemGenerateKey(
     RAND_STATE*     rand          // IN: deterministic RNG for tests (NULL = OS RNG)
 );
 
-/* Encapsulate (public operation). Uses OpenSSL EVP_PKEY_encapsulate. */
+/* Encapsulate (public operation). Uses OpenSSL EVP_PKEY_encapsulate.
+ * Writes directly into V1.85 typed output buffers (§10.3.12-14). */
 LIB_EXPORT TPM_RC CryptMlKemEncapsulate(
-    BYTE*           sharedSecret,    // OUT: 32-byte shared secret
-    UINT16*         sharedSecretSize, // IN/OUT: buffer size in, actual length out
-    BYTE*           ciphertext,      // OUT: ct
-    UINT16*         ciphertextSize,  // IN/OUT: buffer size in, actual length out
-    OBJECT*         kemKey,          // IN: public-key object
-    RAND_STATE*     rand             // IN: deterministic RNG (NULL = OS RNG)
+    TPM2B_SHARED_SECRET*    sharedSecret,  // OUT: 32-byte shared secret (Table 99)
+    TPM2B_KEM_CIPHERTEXT*   ciphertext,    // OUT: ciphertext (Table 101)
+    OBJECT*                 kemKey,         // IN: public-key object
+    RAND_STATE*             rand            // IN: deterministic RNG (NULL = OS RNG)
 );
 
 /* Decapsulate (private operation). Uses OpenSSL EVP_PKEY_decapsulate. */
 LIB_EXPORT TPM_RC CryptMlKemDecapsulate(
-    BYTE*           sharedSecret,    // OUT: 32-byte shared secret
-    UINT16*         sharedSecretSize,// IN/OUT
-    const BYTE*     ciphertext,      // IN
-    UINT16          ciphertextSize,  // IN
-    OBJECT*         kemKey           // IN: private-key object (seed 64 B)
+    TPM2B_SHARED_SECRET*        sharedSecret,  // OUT: 32-byte shared secret
+    const TPM2B_KEM_CIPHERTEXT* ciphertext,    // IN: ciphertext
+    OBJECT*                     kemKey         // IN: private-key object (seed 64 B)
 );
 
 #endif  // ALG_MLKEM

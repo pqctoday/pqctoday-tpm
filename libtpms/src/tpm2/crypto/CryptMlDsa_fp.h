@@ -38,19 +38,23 @@ LIB_EXPORT TPM_RC CryptMlDsaGenerateKey(
 );
 
 /* Sign — both raw ML-DSA (TPM_ALG_MLDSA) and HashML-DSA (TPM_ALG_HASH_MLDSA).
- * For HashML-DSA, the nameAlg of the key object selects the pre-hash variant. */
+ * ctx and hint are optional (NULL = absent). ctx is the FIPS 204 context string
+ * (0–255 bytes); hint is a determinism seed override (V1.85 §11.3.9). */
 LIB_EXPORT TPM_RC CryptMlDsaSign(
-    TPMT_SIGNATURE* sigOut,       // OUT: signature (sigAlg must be TPM_ALG_{MLDSA|HASH_MLDSA})
-    OBJECT*         key,          // IN: signing key — unique.mldsa is pub, sensitive.mldsa is seed
-    TPM2B_DIGEST*   hIn,          // IN: message (or digest, for HashML-DSA)
-    RAND_STATE*     rand          // IN: deterministic RNG for tests (NULL = OS RNG)
+    TPMT_SIGNATURE*           sigOut,  // OUT: signature
+    OBJECT*                   key,     // IN: signing key
+    TPM2B_DIGEST*             hIn,     // IN: message / digest
+    RAND_STATE*               rand,    // IN: deterministic RNG (NULL = OS RNG)
+    const TPM2B_SIGNATURE_CTX *ctx,    // IN: FIPS 204 context string (NULL = empty)
+    const TPM2B_SIGNATURE_HINT *hint   // IN: determinism hint (NULL = ignored)
 );
 
-/* Verify. */
+/* Verify.  ctx is the FIPS 204 context string that was used during signing. */
 LIB_EXPORT TPM_RC CryptMlDsaValidateSignature(
-    TPMT_SIGNATURE* sig,          // IN: signature
-    OBJECT*         key,          // IN: verification key (public only)
-    TPM2B_DIGEST*   digest        // IN: message (or digest)
+    TPMT_SIGNATURE*           sig,     // IN: signature
+    OBJECT*                   key,     // IN: verification key (public only)
+    TPM2B_DIGEST*             digest,  // IN: message / digest
+    const TPM2B_SIGNATURE_CTX *ctx     // IN: FIPS 204 context string (NULL = empty)
 );
 
 #endif  // ALG_MLDSA || ALG_HASH_MLDSA

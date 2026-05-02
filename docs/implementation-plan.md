@@ -115,12 +115,11 @@ Source: TCG Algorithm Registry Version 2.0 RC2 (April 2025).
 Cross-reference: wolfTPM PR #445 for interpretation.
 
 ```c
-// TpmTypes.h — new algorithm IDs from TCG Registry 2.0
-// Exact values TBD — must extract from TCG Algorithm Registry 2.0 RC2 PDF
-// wolfTPM PR #445 uses these (verify against spec):
-#define TPM_ALG_MLDSA          ((TPM_ALG_ID) 0x0040)  // FIPS 204
-#define TPM_ALG_HASH_MLDSA     ((TPM_ALG_ID) 0x0041)  // FIPS 204 pre-hash
-#define TPM_ALG_MLKEM          ((TPM_ALG_ID) 0x0042)  // FIPS 203
+// TpmTypes.h — algorithm IDs from TCG Algorithm Registry (Part 2 §6.3)
+// Values confirmed against TCG TPM 2.0 Library Specification V1.85 RC4 and wolfTPM v4.0.0:
+#define TPM_ALG_MLDSA          ((TPM_ALG_ID) 0x00A1)  // FIPS 204
+#define TPM_ALG_HASH_MLDSA     ((TPM_ALG_ID) 0x00A2)  // FIPS 204 pre-hash
+#define TPM_ALG_MLKEM          ((TPM_ALG_ID) 0x00A0)  // FIPS 203
 ```
 
 ```c
@@ -609,9 +608,9 @@ TPM_RC TPM2_Decapsulate(Decapsulate_In *in, Decapsulate_Out *out) {
 #### Command Code Registration
 
 ```c
-// Add to CommandDispatchData.h / command code table
-#define TPM_CC_Encapsulate      ((TPM_CC) 0x000001A2)  // verify against spec
-#define TPM_CC_Decapsulate      ((TPM_CC) 0x000001A3)  // verify against spec
+// V1.85 PQC command codes — TCG Part 2 Table 11. 0x1A2 is RESERVED (not a command).
+#define TPM_CC_Encapsulate      ((TPM_CC) 0x000001A7)
+#define TPM_CC_Decapsulate      ((TPM_CC) 0x000001A8)
 ```
 
 #### Verification
@@ -708,17 +707,19 @@ The difference from existing `TPM2_Sign` is that these accept the raw message
 | `Marshal.c` / `Unmarshal.c` | Add marshal/unmarshal for new input/output structures |
 | `Commands.h` | Add function prototypes |
 
-#### New Command Codes (verify against V1.85 spec)
+#### New Command Codes — V1.85 spec-correct values (TCG Part 2 Table 11)
+
+Note: 0x1A2 is RESERVED in the spec. Previous draft of this plan had all 8 codes wrong.
 
 ```c
-#define TPM_CC_Encapsulate              ((TPM_CC) 0x000001A2)
-#define TPM_CC_Decapsulate              ((TPM_CC) 0x000001A3)
-#define TPM_CC_SignSequenceStart        ((TPM_CC) 0x000001A4)
-#define TPM_CC_SignSequenceComplete     ((TPM_CC) 0x000001A5)
-#define TPM_CC_VerifySequenceStart      ((TPM_CC) 0x000001A6)
-#define TPM_CC_VerifySequenceComplete   ((TPM_CC) 0x000001A7)
-#define TPM_CC_SignDigest               ((TPM_CC) 0x000001A8)
-#define TPM_CC_VerifyDigestSignature    ((TPM_CC) 0x000001A9)
+#define TPM_CC_VerifySequenceComplete   ((TPM_CC) 0x000001A3)
+#define TPM_CC_SignSequenceComplete      ((TPM_CC) 0x000001A4)
+#define TPM_CC_VerifyDigestSignature    ((TPM_CC) 0x000001A5)
+#define TPM_CC_SignDigest               ((TPM_CC) 0x000001A6)
+#define TPM_CC_Encapsulate              ((TPM_CC) 0x000001A7)
+#define TPM_CC_Decapsulate              ((TPM_CC) 0x000001A8)
+#define TPM_CC_VerifySequenceStart      ((TPM_CC) 0x000001A9)
+#define TPM_CC_SignSequenceStart        ((TPM_CC) 0x000001AA)
 ```
 
 #### Verification

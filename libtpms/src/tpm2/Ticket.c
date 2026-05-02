@@ -127,7 +127,7 @@ TPM_RC TicketComputeVerified(
 	return result;
 
     // Start HMAC using the proof value of the hierarchy as the HMAC key
-    ticket->digest.t.size =
+    ticket->hmac.t.size =
 	CryptHmacStart2B(&hmacState, CONTEXT_INTEGRITY_HASH_ALG, &proof.b);
     MemorySet(proof.b.buffer, 0, proof.b.size);
 
@@ -138,7 +138,7 @@ TPM_RC TicketComputeVerified(
     // key name
     CryptDigestUpdate2B(&hmacState.hashState, &keyName->b);
     // done
-    CryptHmacEnd2B(&hmacState, &ticket->digest.b);
+    CryptHmacEnd2B(&hmacState, &ticket->hmac.b);
 
     return TPM_RC_SUCCESS;
 }

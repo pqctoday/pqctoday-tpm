@@ -104,7 +104,7 @@ TPM2_VerifySignature(VerifySignature_In*  in,  // IN: input parameter list
 	    // TPM_ALG_NULL
 	    out->validation.tag           = TPM_ST_VERIFIED;
 	    out->validation.hierarchy     = TPM_RH_NULL;
-	    out->validation.digest.t.size = 0;
+	    out->validation.hmac.t.size   = 0;
 	}
     else
 	{

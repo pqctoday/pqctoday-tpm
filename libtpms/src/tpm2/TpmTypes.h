@@ -334,7 +334,16 @@ typedef UINT32                              TPM_CC;
 #define TPM_CC_NV_DefineSpace2              (TPM_CC)(0x0000019D)
 #define TPM_CC_NV_ReadPublic2               (TPM_CC)(0x0000019E)
 #define TPM_CC_SetCapability                (TPM_CC)(0x0000019F)
-#define TPM_CC_LAST                         (TPM_CC)(0x0000019F)
+/* V1.85 PQC command codes — TCG Part 2 Table 11. 0x1A2 is RESERVED. */
+#define TPM_CC_VerifySequenceComplete       (TPM_CC)(0x000001A3)
+#define TPM_CC_SignSequenceComplete         (TPM_CC)(0x000001A4)
+#define TPM_CC_VerifyDigestSignature        (TPM_CC)(0x000001A5)
+#define TPM_CC_SignDigest                   (TPM_CC)(0x000001A6)
+#define TPM_CC_Encapsulate                  (TPM_CC)(0x000001A7)
+#define TPM_CC_Decapsulate                  (TPM_CC)(0x000001A8)
+#define TPM_CC_VerifySequenceStart          (TPM_CC)(0x000001A9)
+#define TPM_CC_SignSequenceStart            (TPM_CC)(0x000001AA)
+#define TPM_CC_LAST                         (TPM_CC)(0x000001AA)
 #define CC_VEND                             0x20000000
 #define TPM_CC_Vendor_TCG_Test              (TPM_CC)(0x20000000)
 
@@ -566,6 +575,9 @@ typedef  UINT16             TPM_ST;
 #define TPM_ST_AUTH_SECRET             (TPM_ST)(0x8023)
 #define TPM_ST_HASHCHECK               (TPM_ST)(0x8024)
 #define TPM_ST_AUTH_SIGNED             (TPM_ST)(0x8025)
+/* V1.85 new ticket tag values — TCG Part 2 Table 19 */
+#define TPM_ST_MESSAGE_VERIFIED        (TPM_ST)(0x8026)  /* TPM2_VerifySequenceComplete() */
+#define TPM_ST_DIGEST_VERIFIED         (TPM_ST)(0x8027)  /* TPM2_VerifyDigestSignature() */
 #define TPM_ST_FU_MANIFEST             (TPM_ST)(0x8029)
 
 /* Table 2:20 - Definition of TPM_SU Constants */
@@ -1535,11 +1547,17 @@ typedef struct {
     TPMI_RH_HIERARCHY       hierarchy;
     TPM2B_DIGEST            digest;
 } TPMT_TK_CREATION;
-/* Table 2:90 - Definition of TPMT_TK_VERIFIED Structure  */
+/* Table 2:110 §10.6.4 — metadata selector union for TPMT_TK_VERIFIED (V1.85 new) */
+typedef union {
+    /* TPM_ST_VERIFIED / TPM_ST_MESSAGE_VERIFIED: no metadata (TPMS_EMPTY) */
+    TPM_ALG_ID              digestVerified;  /* selector: TPM_ST_DIGEST_VERIFIED */
+} TPMU_TK_VERIFIED_META;
+/* Table 2:112 §10.6.5 — V1.85 adds [tag]metadata before hmac; "digest" renamed "hmac" */
 typedef struct {
-    TPM_ST                  tag;
-    TPMI_RH_HIERARCHY       hierarchy;
-    TPM2B_DIGEST            digest;
+    TPM_ST                      tag;
+    TPMI_RH_HIERARCHY           hierarchy;
+    TPMU_TK_VERIFIED_META       metadata;  /* [tag]-conditional; zero-size for VERIFIED/MESSAGE_VERIFIED */
+    TPM2B_DIGEST                hmac;      /* was "digest" in pre-V1.85 */
 } TPMT_TK_VERIFIED;
 /* Table 2:91 - Definition of TPMT_TK_AUTH Structure  */
 typedef struct {
@@ -2125,6 +2143,21 @@ typedef  TPMS_SIGNATURE_ECC    TPMS_SIGNATURE_ECDAA;
 typedef  TPMS_SIGNATURE_ECC    TPMS_SIGNATURE_ECDSA;
 typedef  TPMS_SIGNATURE_ECC    TPMS_SIGNATURE_SM2;
 typedef  TPMS_SIGNATURE_ECC    TPMS_SIGNATURE_ECSCHNORR;
+/* Table 2:216 §11.3.4 — must precede TPMU_SIGNATURE; spec-canonical name */
+#if ALG_MLDSA || ALG_HASH_MLDSA
+typedef union {
+    struct {
+	UINT16                  size;
+	BYTE                    buffer[MAX_MLDSA_SIG_SIZE];
+    }            t;
+    TPM2B        b;
+} TPM2B_SIGNATURE_MLDSA;
+/* Table 2:208 §11.2.7.2 — HashML-DSA signature with hash algorithm binding */
+typedef struct {
+    TPMI_ALG_HASH           hash;
+    TPM2B_SIGNATURE_MLDSA   signature;
+} TPMS_SIGNATURE_HASH_MLDSA;
+#endif   /* ALG_MLDSA || ALG_HASH_MLDSA */
 /* Table 2:179 - Definition of TPMU_SIGNATURE Union  */
 typedef union {
 #if 	ALG_ECC
@@ -2148,6 +2181,12 @@ typedef union {
 #if 	ALG_HMAC
     TPMT_HA                     hmac;
 #endif   // ALG_HMAC
+#if 	ALG_MLDSA
+    TPM2B_SIGNATURE_MLDSA       mldsa;       /* §11.3.5 Table 217 — bare ML-DSA */
+#endif   // ALG_MLDSA
+#if 	ALG_HASH_MLDSA
+    TPMS_SIGNATURE_HASH_MLDSA   hash_mldsa;  /* §11.3.5 Table 217 — HashML-DSA */
+#endif   // ALG_HASH_MLDSA
     TPMS_SCHEME_HASH            any;
 } TPMU_SIGNATURE;
 /* Table 2:180 - Definition of TPMT_SIGNATURE Structure  */
@@ -2169,6 +2208,9 @@ typedef union {
 #if 	ALG_KEYEDHASH
     BYTE                    keyedHash[sizeof(TPM2B_DIGEST)];
 #endif   // ALG_KEYEDHASH
+#if 	ALG_MLKEM
+    BYTE                    mlkem[MAX_MLKEM_CT_SIZE];    /* §11.4.2 Table 222 — V1.85 */
+#endif   // ALG_MLKEM
 } TPMU_ENCRYPTED_SECRET;
 /* Table 2:182 - Definition of TPM2B_ENCRYPTED_SECRET Structure  */
 typedef union {
@@ -2198,6 +2240,26 @@ typedef union {
     }            t;
     TPM2B        b;
 } TPM2B_PRIVATE_KEY_MLDSA;
+/* Tables 2:219-220 §11.3.7-8 — signing/verification context (domain separation) */
+#define MAX_SIG_CTX_BYTES  MAX_SIGNATURE_CTX_SIZE  /* 255 — spec requires >= 255 for ML-DSA */
+typedef union {
+    BYTE                    buffer[MAX_SIG_CTX_BYTES];
+} TPMU_SIGNATURE_CTX;
+typedef union {
+    struct {
+	UINT16                  size;
+	BYTE                    context[sizeof(TPMU_SIGNATURE_CTX)];
+    }            t;
+    TPM2B        b;
+} TPM2B_SIGNATURE_CTX;
+/* Table 2:221 §11.3.9 — hint for signature verification */
+typedef union {
+    struct {
+	UINT16                  size;
+	BYTE                    hint[MAX_SIGNATURE_HINT_SIZE];
+    }            t;
+    TPM2B        b;
+} TPM2B_SIGNATURE_HINT;
 #endif
 
 #if ALG_MLKEM
@@ -2215,6 +2277,25 @@ typedef union {
     }            t;
     TPM2B        b;
 } TPM2B_PRIVATE_KEY_MLKEM;
+/* Table 2:99 §10.3.12 — shared secret output from Encapsulate/Decapsulate */
+typedef union {
+    struct {
+	UINT16                  size;
+	BYTE                    buffer[MAX_SHARED_SECRET_SIZE];
+    }            t;
+    TPM2B        b;
+} TPM2B_SHARED_SECRET;
+/* Tables 2:100-101 §10.3.13-14 — KEM ciphertext (encapsulated shared secret) */
+typedef union {
+    BYTE                    mlkem[MAX_MLKEM_CT_SIZE];   /* selector: TPM_ALG_MLKEM */
+} TPMU_KEM_CIPHERTEXT;
+typedef union {
+    struct {
+	UINT16                  size;
+	BYTE                    buffer[sizeof(TPMU_KEM_CIPHERTEXT)];
+    }            t;
+    TPM2B        b;
+} TPM2B_KEM_CIPHERTEXT;
 #endif
 
 /* Table 2:184 - Definition of TPMU_PUBLIC_ID Union  */

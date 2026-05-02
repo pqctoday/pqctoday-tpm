@@ -11,20 +11,28 @@ Fork of [libtpms v0.10.2](https://github.com/stefanberger/libtpms) + [swtpm v0.1
 | Phase | Scope | Status |
 | --- | --- | --- |
 | **1 — Foundation** | Algorithm IDs, crypto primitives (ML-DSA + ML-KEM), marshal/unmarshal, NIST ACVP KATs | ✅ Complete |
-| 2 — V1.85 Commands | `TPM2_Encapsulate`, `TPM2_Decapsulate`, sign/verify sequence, `TPM2_SignDigest` | 🔲 Not started |
+| **2 — V1.85 Commands** | `TPM2_Encapsulate`, `TPM2_Decapsulate`, `TPM2_SignDigest`, `TPM2_VerifyDigestSignature` — live; sequence commands wired, pending Phase 4 | ✅ In progress (4/8 live) |
 | 3 — Key Hierarchy | PQC EK/AK, hybrid EK certificates | 🔲 Not started |
 | 4 — Attestation | `TPM2_Quote`, `TPM2_Certify`, PCR banks | 🔲 Not started |
 | 5 — WASM | Emscripten build, browser API, PQC Today integration | 🔲 Not started |
 
-**What works today (Phase 1):** The PQC-enabled libtpms builds and passes all
-tests. `TPM2_CreatePrimary` with `TPM_ALG_MLDSA` succeeds end-to-end via direct
-libtpms. Classical TPM operations (RSA, ECC) work unchanged via the swtpm socket.
-Phase 2 adds the new V1.85 command surface that tpm2-tools will need to drive PQC
-keys from the command line.
+**What works today:**
+
+- `TPM2_CreatePrimary` / `TPM2_Create` / `TPM2_Load` with ML-DSA and ML-KEM keys
+- `TPM2_Encapsulate` — encapsulate against a loaded ML-KEM public key, returns ciphertext + shared secret
+- `TPM2_Decapsulate` — decapsulate with a loaded ML-KEM private key, returns shared secret
+- `TPM2_SignDigest` — sign a pre-computed digest with a loaded ML-DSA or HashML-DSA key
+- `TPM2_VerifyDigestSignature` — verify an ML-DSA / HashML-DSA signature over a pre-computed digest, returns `TPM_ST_DIGEST_VERIFIED` ticket
+- All classical TPM operations (RSA, ECC, symmetric) work unchanged via the swtpm socket
+- 83-check TCG V1.85 compliance suite passes end-to-end
+
+**Streaming sequence commands** (`TPM2_SignSequenceStart/Complete`, `TPM2_VerifySequenceStart/Complete`) are dispatch-wired and return `TPM_RC_COMMAND_CODE` until Phase 4, which requires a new `MLDSA_SEQUENCE_OBJECT` type for holding live `EVP_MD_CTX*` state across command boundaries.
 
 ---
 
 ## What V1.85 adds
+
+### New algorithms
 
 | Algorithm | TCG ID | FIPS standard | Key sizes |
 | --- | --- | --- | --- |
@@ -32,9 +40,18 @@ keys from the command line.
 | ML-DSA-44 / 65 / 87 | `0x00A1` | FIPS 204 | pk 1312/1952/2592 B, seed 32 B |
 | HashML-DSA | `0x00A2` | FIPS 204 §5.4 | pre-hash variant |
 
-New V1.85 TPM commands (Phase 2+): `TPM2_Encapsulate`, `TPM2_Decapsulate`,
-`TPM2_SignSequenceStart/Complete`, `TPM2_VerifySequenceStart/Complete`,
-`TPM2_SignDigest`, `TPM2_VerifyDigestSignature`.
+### New TPM command codes
+
+| Command | Code | Status |
+| --- | --- | --- |
+| `TPM2_VerifyDigestSignature` | `0x1A5` | ✅ Live (Phase 2) |
+| `TPM2_SignDigest` | `0x1A6` | ✅ Live (Phase 2) |
+| `TPM2_Encapsulate` | `0x1A7` | ✅ Live (Phase 2) |
+| `TPM2_Decapsulate` | `0x1A8` | ✅ Live (Phase 2) |
+| `TPM2_VerifySequenceComplete` | `0x1A3` | 🔲 Phase 4 |
+| `TPM2_SignSequenceComplete` | `0x1A4` | 🔲 Phase 4 |
+| `TPM2_VerifySequenceStart` | `0x1A9` | 🔲 Phase 4 |
+| `TPM2_SignSequenceStart` | `0x1AA` | 🔲 Phase 4 |
 
 ---
 
@@ -62,7 +79,7 @@ docker run -d --name pqc-tpm \
     --flags not-need-init
 ```
 
-### Initialise and use (classical operations — work today)
+### Initialise and use (classical operations)
 
 ```bash
 export TPM2TOOLS_TCTI="swtpm:host=localhost,port=2321"
@@ -78,14 +95,14 @@ echo "hello" | tpm2_sign    -c key.ctx -g sha256 -o sig.bin
 echo "hello" | tpm2_verifysignature -c key.ctx -g sha256 -s sig.bin
 ```
 
-### PQC keys today (Phase 1)
+### PQC keys (Phase 2 command surface)
 
-`tpm2-tools` v5.x does not yet recognise the `-G mldsa65` name, and does not
-accept raw algorithm IDs via `-G 0xa1`. PQC key creation works through raw TPM
-command bytes, as demonstrated in `tests/crossval/src/test_tpm_roundtrip.c`:
+`tpm2-tools` v5.x does not yet recognise `-G mldsa65` or accept raw algorithm IDs via `-G 0xa1`.
+PQC key operations work through raw TPM command bytes, as demonstrated in
+`tests/crossval/src/test_tpm_roundtrip.c`:
 
 ```bash
-# Build and run the Phase 1 end-to-end test inside the container:
+# Build and run the end-to-end test inside the container:
 make crossval-build
 docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
   bash -c 'cd libtpms && make install > /dev/null 2>&1 && ldconfig && cd - && \
@@ -99,31 +116,23 @@ docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
 # 4 passed, 0 failed
 ```
 
-To create PQC keys programmatically in your own application today, use the
-`TPMLIB_Process` API directly (same approach as `test_tpm_roundtrip.c`) or
-any TPM 2.0 library that accepts raw TCTI commands — pass `TPM_ALG_MLDSA`
-(`0x00A1`) as the object type in `TPM2_CreatePrimary`.
-
-**Phase 2 will add** `tpm2-tools`-compatible PQC command ergonomics once the
-new V1.85 commands (`TPM2_Encapsulate`, `TPM2_Decapsulate`, etc.) and the
-corresponding `tpm2-tools` PQC template support are implemented.
-
-### Connecting your application via TCTI
-
-Any TPM 2.0 library that supports the `swtpm` TCTI can connect to the emulator
-without modification. The PQC algorithm IDs are registered in the TPM's
-algorithm capability table and will be returned by `TPM2_GetCapability` once
-Phase 2 commands are implemented.
+To drive PQC commands directly in your application today, use `TPMLIB_Process` (same pattern as
+`test_tpm_roundtrip.c`) or any TPM 2.0 library that accepts raw TCTI commands:
 
 ```c
 // tpm2-tss example (any TCTI)
 TSS2_TCTI_CONTEXT *tcti = NULL;
 Tss2_TctiLdr_Initialize("swtpm:host=localhost,port=2321", &tcti);
 
-// TPM_ALG_MLDSA = 0x00A1 (registered, usable from Phase 1)
-// TPM_ALG_MLKEM = 0x00A0 (registered, usable from Phase 1)
-// TPM2_Encapsulate CC = 0x01A2 (Phase 2)
-// TPM2_Decapsulate CC = 0x01A3 (Phase 2)
+// Algorithm IDs (registered and usable from Phase 1)
+// TPM_ALG_MLKEM = 0x00A0
+// TPM_ALG_MLDSA = 0x00A1
+
+// Phase 2 command codes (live)
+// TPM2_Encapsulate CC            = 0x1A7
+// TPM2_Decapsulate CC            = 0x1A8
+// TPM2_SignDigest CC             = 0x1A6
+// TPM2_VerifyDigestSignature CC  = 0x1A5
 ```
 
 ---
@@ -164,13 +173,6 @@ const signature = await tpm.sign({
 const ok = await tpm.verify({ publicKey, message, signature })
 ```
 
-### PQC Today app integration target
-
-The WASM module will power the **TPM Workshop** module in the
-[pqc-timeline-app](https://github.com/pqctoday/pqc-timeline-app), enabling
-users to generate PQC TPM keys, attest to PCR state, and explore the V1.85
-hierarchy entirely in-browser — no installation required.
-
 ---
 
 ## Build
@@ -185,10 +187,9 @@ docker build -f docker/Dockerfile.dev -t pqctoday-tpm-dev .
 docker run --rm -it -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev bash
 ```
 
-### Native (inside the container)
+### libtpms (inside the container)
 
 ```bash
-# libtpms
 cd libtpms
 ./autogen.sh
 ./configure --with-tpm2 --with-openssl \
@@ -197,24 +198,27 @@ cd libtpms
   LDFLAGS="-L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64"
 make -j$(nproc)
 make check       # 10/10 tests green
+```
 
-# swtpm
-cd ../swtpm
+### swtpm (inside the container)
+
+```bash
+cd swtpm
 ./autogen.sh --with-openssl
 make -j$(nproc)
 ```
 
-### Verify the PQC build
+### Verify the PQC build (inside the container)
 
 ```bash
-# Algorithm IDs registered (look for 0xa0, 0xa1, 0xa2)
-openssl list -providers -kem-algorithms | grep ML-KEM
-openssl list -providers -signature-algorithms | grep ML-DSA
+# Confirm OpenSSL 3.6 EVP algorithms are present
+openssl list -kem-algorithms | grep ML-KEM
+openssl list -signature-algorithms | grep ML-DSA
 
-# Cross-validation: OpenSSL EVP + NIST ACVP KATs (no extra deps)
+# Cross-validation: OpenSSL EVP round-trips + NIST ACVP KATs + TPM2_CreatePrimary
 make crossval
 
-# Full compliance: 58 checks across §5, §9-§15 of TCG V1.85
+# Full compliance: 83 checks across §5, §9-§15 of TCG V1.85
 make compliance
 ```
 
@@ -226,8 +230,185 @@ make compliance
 | --- | --- | --- |
 | `make crossval` | OpenSSL EVP round-trips (ML-DSA-{44,65,87}, ML-KEM-{512,768,1024}), 75 NIST ACVP ML-DSA keyGen KATs, `TPM2_CreatePrimary(MLDSA-65)` end-to-end | 17/17 pass |
 | `make crossval-softhsm` | All of above + softhsmv3 C++ cross-verify (sign↔verify, encap↔decap) | 17/17 pass |
-| `make compliance` | 58-check TCG V1.85 compliance suite | 58/58 pass |
+| `make compliance` | 83-check TCG V1.85 compliance suite | 83 PASS / 0 FAIL |
 | `libtpms make check` | Upstream libtpms unit tests | 10/10 pass |
+
+> **macOS note:** The cross-val binaries are Linux ELF and run inside Docker. The compliance
+> script auto-detects Homebrew OpenSSL 3.6 (`/opt/homebrew/opt/openssl@3.6/bin/openssl`) on
+> macOS for static checks; the 2 Linux-ELF binary tests are auto-skipped instead of failing.
+
+---
+
+## Developer guide
+
+### Adding a new V1.85 command
+
+Follow this five-step pattern — each step has a direct model in the Phase 2 implementation.
+
+#### 1. Define `_fp.h` — In/Out structs and RC handle constants
+
+Create `libtpms/src/tpm2/MyCmd_fp.h`. The `RC_MyCmd_*` constants index into the
+error-coding scheme; handle parameters start at `TPM_RC_H + TPM_RC_1`, subsequent
+handles increment; parameter errors start at `TPM_RC_P + TPM_RC_1`.
+
+```c
+// MyCmd_fp.h
+typedef struct {
+    TPMI_DH_OBJECT  keyHandle;   // handle — excluded from paramOffsets
+    TPM2B_DIGEST    input;       // first non-handle in-param
+} MyCmd_In;
+#define RC_MyCmd_keyHandle  (TPM_RC_H + TPM_RC_1)
+#define RC_MyCmd_input      (TPM_RC_P + TPM_RC_1)
+
+typedef struct {
+    TPM2B_DIGEST    output;      // first out-param excluded from paramOffsets
+} MyCmd_Out;
+
+TPM_RC TPM2_MyCmd(MyCmd_In *in, MyCmd_Out *out);
+```
+
+#### 2. Add a `CC_MyCmd` guard in `TpmProfile_CommandList.h`
+
+```c
+#define CC_MyCmd  (CC_YES && ALG_MLDSA)   // or CC_YES for unconditional
+```
+
+#### 3. Register in `RuntimeCommands.c`
+
+```c
+COMMAND(MyCmd, true, 1),   // true = enabled by default; 1 = libtpms-added
+```
+
+#### 4. Wire the dispatch table in `CommandDispatchData.h`
+
+Two arrays need entries: `s_unmarshalArray` (input parameter types and handle types),
+and `s_marshalArray` (output parameter types). A parallel struct holds the
+`paramOffsets` array — byte offsets into the `In` struct for non-handle parameters
+(handles are excluded), and into the `Out` struct for output parameters (the first
+output parameter gets offset 0 by convention and is excluded from the array).
+
+Add new type codes if your command uses types not already present (e.g., adding
+`TPM2B_MY_TYPE_P_UNMARSHAL` after `PARAMETER_LAST_TYPE` and updating that constant).
+
+See the existing ML-DSA / ML-KEM entries immediately before `#if CC_Vendor_TCG_Test`
+as the concrete model.
+
+#### 5. Implement the handler
+
+Create `libtpms/src/tpm2/PqcMyCommands.c` (or add to an existing PQC file):
+
+```c
+#include "Tpm.h"
+#include "MyCmd_fp.h"
+
+#if CC_MyCmd
+TPM_RC
+TPM2_MyCmd(MyCmd_In *in, MyCmd_Out *out)
+{
+    OBJECT *obj = HandleToObject(in->keyHandle);
+
+    if (!IsSigningObject(obj))
+        return TPM_RCS_KEY + RC_MyCmd_keyHandle;
+
+    return CryptMyOperation(&out->output, obj, &in->input);
+}
+#endif
+```
+
+---
+
+## DevOps guide
+
+### First-time setup
+
+```bash
+# Build the dev container (Ubuntu 24.04, OpenSSL 3.6.2 from source, cmake, tpm2-tools)
+make docker-dev
+
+# Verify the image
+docker run --rm pqctoday-tpm-dev openssl version
+# → OpenSSL 3.6.2 ...
+```
+
+### Compile verification
+
+Always run inside Docker to ensure the OpenSSL 3.6.2 headers and libraries are available:
+
+```bash
+docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev bash -c \
+  'cd libtpms && autoreconf -fi && \
+   ./configure --with-tpm2 --with-openssl \
+     PKG_CONFIG_PATH=/opt/openssl/lib64/pkgconfig \
+     CFLAGS="-I/opt/openssl/include" \
+     LDFLAGS="-L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64" && \
+   make -j$(nproc) 2>&1 | tail -10'
+```
+
+A clean build produces no warnings. Any `implicit declaration` or `incompatible pointer` error
+indicates a missing `_fp.h` include or type mismatch — fix before merging.
+
+### Compliance gate
+
+The compliance script is the canonical PR gate. It must exit **0 FAIL**:
+
+```bash
+make compliance
+# → ... 83 PASS / 0 FAIL / 2 SKIP
+```
+
+The 2 SKIPs are Linux ELF binary checks auto-skipped on macOS (they run green in Docker / CI).
+
+Run the full suite inside Docker to get a zero-SKIP result:
+
+```bash
+docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev \
+  bash -c 'cd libtpms && make install -s && ldconfig && cd - && \
+           bash tests/compliance/v185_compliance.sh'
+# → 83 PASS / 0 FAIL / 0 SKIP
+```
+
+### Upstream libtpms unit tests
+
+```bash
+docker run --rm -v "$PWD:/workspace" -w /workspace pqctoday-tpm-dev bash -c \
+  'cd libtpms && make check'
+# → PASS: 10
+```
+
+These tests exercise the upstream command dispatcher end-to-end. Any regression here
+means a change broke a classical TPM operation — treat as a P0 blocker.
+
+### Cross-validation harness
+
+```bash
+make crossval          # build + run in Docker (OpenSSL EVP round-trips + ACVP KATs)
+make crossval-softhsm  # also loads softhsmv3 for C++ ↔ Go cross-verify
+```
+
+The softhsmv3 variant requires the sibling repo built at `../softhsmv3/build-pqctoday/`.
+Override the path: `SOFTHSMV3_DIR=/path/to/softhsmv3 make crossval-softhsm`.
+
+### OpenSSL version check (host)
+
+The macOS system `openssl` is LibreSSL 3.3.6 and does **not** have ML-KEM or ML-DSA.
+Use Homebrew OpenSSL 3.6 for any host-side manual checks:
+
+```bash
+/opt/homebrew/opt/openssl@3.6/bin/openssl version
+# → OpenSSL 3.6.x ...
+/opt/homebrew/opt/openssl@3.6/bin/openssl list -signature-algorithms | grep ML-DSA
+```
+
+### Patch workflow (upstream submission)
+
+PQC changes are tracked as quilt patches in `patches/`. Before opening a PR against
+upstream libtpms, regenerate the patch set:
+
+```bash
+cd libtpms
+quilt refresh
+quilt export patches/
+```
 
 ---
 
@@ -235,27 +416,50 @@ make compliance
 
 ```text
 pqctoday-tpm/
-├── libtpms/                     # libtpms v0.10.2 (squashed subtree)
+├── libtpms/                          # libtpms v0.10.2 (squashed subtree)
 │   └── src/tpm2/
-│       ├── TpmTypes.h           # +TPM_ALG_MLKEM/MLDSA/HASH_MLDSA, PQC param sets
-│       ├── TpmAlgorithmDefines.h# +FIPS 203/204 key/sig/ct size constants
-│       ├── TpmProfile_Common.h  # ALG_MLKEM/MLDSA/HASH_MLDSA = ALG_YES
-│       ├── CryptUtil.c          # +ML-DSA/ML-KEM dispatch in CreateObject/Sign/Verify
-│       ├── Marshal.c            # +PQC TPMU marshal
-│       ├── Unmarshal.c          # +PQC TPMU unmarshal
-│       ├── NVMarshal.c          # +PQC NV sensitive marshal
-│       ├── Object_spt.c         # +PQC scheme checks
+│       ├── TpmTypes.h                # +TPM_ALG_MLKEM/MLDSA/HASH_MLDSA, PQC param sets,
+│       │                             #  TPM2B_SIGNATURE_MLDSA, TPMS_SIGNATURE_HASH_MLDSA,
+│       │                             #  TPM2B_KEM_CIPHERTEXT, TPM2B_SHARED_SECRET,
+│       │                             #  TPM2B_SIGNATURE_CTX, TPM2B_SIGNATURE_HINT,
+│       │                             #  TPMU_TK_VERIFIED_META, updated TPMT_TK_VERIFIED
+│       ├── TpmAlgorithmDefines.h     # +FIPS 203/204 key/sig/ct size constants,
+│       │                             #  MAX_SIGNATURE_HINT_SIZE, TPM_CC_* V1.85 codes
+│       ├── TpmProfile_CommandList.h  # +CC_Encapsulate/Decapsulate/SignDigest/
+│       │                             #  VerifyDigestSignature/Sequence* guards
+│       ├── TpmProfile_Common.h       # ALG_MLKEM/MLDSA/HASH_MLDSA = ALG_YES
+│       ├── RuntimeCommands.c         # +V1.85 COMMAND() entries
+│       ├── CommandDispatchData.h     # +8 V1.85 command descriptors + dispatch types
+│       ├── CryptUtil.c               # +ML-DSA/ML-KEM dispatch in Sign/Verify
+│       ├── Marshal.c                 # +PQC TPMU marshal, V1.85 new types
+│       ├── Unmarshal.c               # +PQC TPMU unmarshal, V1.85 new types
+│       ├── NVMarshal.c               # +PQC NV sensitive marshal
+│       ├── Object_spt.c              # +PQC scheme checks
+│       │
+│       ├── PqcKemCommands.c          # NEW — TPM2_Encapsulate, TPM2_Decapsulate
+│       ├── PqcMlDsaCommands.c        # NEW — TPM2_SignDigest, TPM2_VerifyDigestSignature,
+│       │                             #        Phase 4 sequence stubs
+│       ├── Encapsulate_fp.h          # NEW — Encapsulate In/Out structs
+│       ├── Decapsulate_fp.h          # NEW — Decapsulate In/Out structs
+│       ├── SignDigest_fp.h           # NEW — SignDigest In/Out structs
+│       ├── VerifyDigestSignature_fp.h# NEW — VerifyDigestSignature In/Out structs
+│       ├── SignSequenceStart_fp.h    # NEW — Phase 4 stub
+│       ├── SignSequenceComplete_fp.h # NEW — Phase 4 stub
+│       ├── VerifySequenceStart_fp.h  # NEW — Phase 4 stub
+│       ├── VerifySequenceComplete_fp.h# NEW — Phase 4 stub
+│       │
 │       └── crypto/openssl/
-│           ├── CryptMlDsa.c     # NEW — ML-DSA via OpenSSL EVP
-│           └── CryptMlKem.c     # NEW — ML-KEM via OpenSSL EVP
-├── swtpm/                       # swtpm v0.10.1 (squashed subtree, minimal changes)
-├── patches/                     # Quilt patches for upstream submission
+│           ├── CryptMlDsa.c          # ML-DSA via OpenSSL EVP; ctx/hint forwarding
+│           ├── CryptMlKem.c          # ML-KEM via OpenSSL EVP
+│           └── CryptMlDsa_fp.h       # Updated: CryptMlDsaSign/Validate accept ctx+hint
+├── swtpm/                            # swtpm v0.10.1 (squashed subtree, minimal changes)
+├── patches/                          # Quilt patches for upstream submission
 ├── tests/
 │   ├── compliance/
-│   │   └── v185_compliance.sh   # 58-check TCG V1.85 compliance suite
+│   │   └── v185_compliance.sh        # 83-check TCG V1.85 compliance suite
 │   └── crossval/
 │       ├── src/
-│       │   ├── test_pqc_crossval.c   # OpenSSL + NIST ACVP KAT driver
+│       │   ├── test_pqc_crossval.c   # OpenSSL EVP round-trips + NIST ACVP KAT driver
 │       │   ├── test_tpm_roundtrip.c  # TPM2_CreatePrimary(MLDSA-65) end-to-end
 │       │   ├── kat_loader.c          # NIST ACVP JSON parser
 │       │   └── p11_helper.c          # PKCS#11 dlopen helper (softhsmv3)
@@ -263,14 +467,14 @@ pqctoday-tpm/
 │           └── ML-DSA-keyGen-FIPS204/
 │               └── internalProjection.json  # 75 NIST ACVP keyGen vectors
 ├── docker/
-│   └── Dockerfile.dev           # Ubuntu 24.04 + OpenSSL 3.6.2 from source
+│   └── Dockerfile.dev                # Ubuntu 24.04 + OpenSSL 3.6.2 from source
 ├── docs/
-│   ├── architecture.md          # System design, data flows, file map
-│   ├── implementation-plan.md   # Phased roadmap with code-level detail
-│   ├── v185-compliance.md       # Command compliance matrix
-│   ├── wasm-integration.md      # Browser build + PQC Today API
-│   └── standards/               # TCG V1.85 RC4 Parts 0-3 (PDF)
-└── Makefile                     # crossval / compliance / docker-dev targets
+│   ├── architecture.md               # System design, data flows, file map
+│   ├── implementation-plan.md        # Phased roadmap with code-level detail
+│   ├── v185-compliance.md            # Command compliance matrix
+│   ├── wasm-integration.md           # Browser build + PQC Today API
+│   └── standards/                    # TCG V1.85 RC4 Parts 0-3 (PDF)
+└── Makefile                          # crossval / compliance / docker-dev targets
 ```
 
 ---
@@ -288,12 +492,23 @@ pqctoday-tpm/
 
 - **Algorithm IDs**: `TPM_ALG_MLKEM = 0x00A0`, `TPM_ALG_MLDSA = 0x00A1`,
   `TPM_ALG_HASH_MLDSA = 0x00A2` — from TCG Algorithm Registry 2.0 RC2,
-  cross-checked against wolfTPM PR #445. The obvious 0x0040-0x0042 range
-  was rejected because it collides with `TPM_ALG_CTR / OFB / CBC`.
+  cross-checked against wolfTPM PR #445.
 
 - **Buffer sizing**: `TPM_BUFFER_MAX` enlarged from 4096 → 8192 bytes
   (ML-DSA-87 signature alone is 4627 bytes). `s_actionIoBuffer` doubled
   from 768 → 1536 UINT64 elements.
+
+- **FIPS 204 context string**: `TPM2_SignDigest` and `TPM2_VerifyDigestSignature`
+  forward the optional `context` field to OpenSSL via
+  `OSSL_SIGNATURE_PARAM_CONTEXT_STRING` / `EVP_PKEY_CTX_set_params`. The `hint`
+  field (FIPS 204 randomness override `rnd`) is accepted and silently ignored —
+  OpenSSL 3.6 does not expose an external rnd injection API.
+
+- **Streaming sequence commands**: `TPM2_SignSequenceStart/Complete` and
+  `TPM2_VerifySequenceStart/Complete` return `TPM_RC_COMMAND_CODE` until Phase 4
+  adds `MLDSA_SEQUENCE_OBJECT` (a handle-tracked struct holding a live
+  `EVP_MD_CTX*` across command boundaries). wolfTPM PR #445 has the same
+  architectural gap for identical reasons.
 
 ---
 

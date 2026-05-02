@@ -623,8 +623,21 @@ TPMT_TK_CREATION_Marshal(TPMT_TK_CREATION *source, BYTE **buffer, INT32 *size)
     return written;
 }
 
-/* Table 2:90 - Definition of TPMT_TK_VERIFIED Structure (StructuresTable()) */
+/* Table 2:110 §10.6.4 — TPMU_TK_VERIFIED_META is [tag]-conditional;
+ * TPM_ST_VERIFIED and TPM_ST_MESSAGE_VERIFIED carry no metadata (TPMS_EMPTY). */
+static UINT16
+TPMU_TK_VERIFIED_META_Marshal(TPMU_TK_VERIFIED_META *source, BYTE **buffer,
+                               INT32 *size, TPM_ST selector)
+{
+    switch(selector) {
+    case TPM_ST_DIGEST_VERIFIED:
+        return TPM_ALG_ID_Marshal(&source->digestVerified, buffer, size);
+    default:
+        return 0;  /* TPMS_EMPTY for TPM_ST_VERIFIED / TPM_ST_MESSAGE_VERIFIED */
+    }
+}
 
+/* Table 2:112 §10.6.5 — V1.85: serialize [tag]metadata before hmac */
 UINT16
 TPMT_TK_VERIFIED_Marshal(TPMT_TK_VERIFIED *source, BYTE **buffer, INT32 *size)
 {
@@ -632,7 +645,8 @@ TPMT_TK_VERIFIED_Marshal(TPMT_TK_VERIFIED *source, BYTE **buffer, INT32 *size)
 
     written += TPM_ST_Marshal(&source->tag, buffer, size);
     written += TPMI_RH_HIERARCHY_Marshal(&source->hierarchy, buffer, size);
-    written += TPM2B_DIGEST_Marshal(&source->digest, buffer, size);
+    written += TPMU_TK_VERIFIED_META_Marshal(&source->metadata, buffer, size, source->tag);
+    written += TPM2B_DIGEST_Marshal(&source->hmac, buffer, size);
     return written;
 }
 
@@ -1781,6 +1795,61 @@ TPMS_MLKEM_PARMS_Marshal(TPMS_MLKEM_PARMS *source, BYTE **buffer, INT32 *size)
 }
 #endif /* ALG_MLKEM */
 
+/* ── V1.85 new ML-DSA signature and context types ────────────────────────── */
+#if ALG_MLDSA || ALG_HASH_MLDSA
+
+/* Table 2:216 §11.3.4 */
+UINT16
+TPM2B_SIGNATURE_MLDSA_Marshal(TPM2B_SIGNATURE_MLDSA *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, MAX_MLDSA_SIG_SIZE, buffer, size);
+}
+
+/* Table 2:208 §11.2.7.2 */
+UINT16
+TPMS_SIGNATURE_HASH_MLDSA_Marshal(TPMS_SIGNATURE_HASH_MLDSA *source, BYTE **buffer, INT32 *size)
+{
+    UINT16 written = 0;
+    written += TPMI_ALG_HASH_Marshal(&source->hash, buffer, size);
+    written += TPM2B_SIGNATURE_MLDSA_Marshal(&source->signature, buffer, size);
+    return written;
+}
+
+/* Table 2:220 §11.3.8 */
+UINT16
+TPM2B_SIGNATURE_CTX_Marshal(TPM2B_SIGNATURE_CTX *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, MAX_SIG_CTX_BYTES, buffer, size);
+}
+
+/* Table 2:221 §11.3.9 */
+UINT16
+TPM2B_SIGNATURE_HINT_Marshal(TPM2B_SIGNATURE_HINT *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, MAX_SIGNATURE_HINT_SIZE, buffer, size);
+}
+
+#endif /* ALG_MLDSA || ALG_HASH_MLDSA */
+
+/* ── V1.85 new ML-KEM KEM types ──────────────────────────────────────────── */
+#if ALG_MLKEM
+
+/* Table 2:99 §10.3.12 */
+UINT16
+TPM2B_SHARED_SECRET_Marshal(TPM2B_SHARED_SECRET *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, MAX_SHARED_SECRET_SIZE, buffer, size);
+}
+
+/* Table 2:101 §10.3.14 */
+UINT16
+TPM2B_KEM_CIPHERTEXT_Marshal(TPM2B_KEM_CIPHERTEXT *source, BYTE **buffer, INT32 *size)
+{
+    return TPM2B_Marshal(&source->b, sizeof(TPMU_KEM_CIPHERTEXT), buffer, size);
+}
+
+#endif /* ALG_MLKEM */
+
 /* Table 2:168 - Definition of TPM2B_ECC_PARAMETER Structure (StructuresTable()) */
 
 UINT16
@@ -1993,6 +2062,16 @@ TPMU_SIGNATURE_Marshal(TPMU_SIGNATURE *source, BYTE **buffer, INT32 *size, UINT3
 #if ALG_HMAC
       case TPM_ALG_HMAC:
 	written += TPMT_HA_Marshal(&source->hmac, buffer, size);
+	break;
+#endif
+#if ALG_MLDSA
+      case TPM_ALG_MLDSA:
+	written += TPM2B_SIGNATURE_MLDSA_Marshal(&source->mldsa, buffer, size);
+	break;
+#endif
+#if ALG_HASH_MLDSA
+      case TPM_ALG_HASH_MLDSA:
+	written += TPMS_SIGNATURE_HASH_MLDSA_Marshal(&source->hash_mldsa, buffer, size);
 	break;
 #endif
       case TPM_ALG_NULL:

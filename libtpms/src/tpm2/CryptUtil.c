@@ -1677,7 +1677,7 @@ CryptSign(OBJECT*          signKey,     // IN: signing key
 #if ALG_MLDSA || ALG_HASH_MLDSA
 	  case TPM_ALG_MLDSA:
 	  case TPM_ALG_HASH_MLDSA:
-	    result = CryptMlDsaSign(signature, signKey, digest, NULL);
+	    result = CryptMlDsaSign(signature, signKey, digest, NULL, NULL, NULL);
 	    break;
 #endif  // ALG_MLDSA || ALG_HASH_MLDSA
 	  case TPM_ALG_KEYEDHASH:
@@ -1743,7 +1743,7 @@ CryptValidateSignature(TPMI_DH_OBJECT  keyHandle,  // IN: The handle of sign key
 #if ALG_MLDSA || ALG_HASH_MLDSA
 	  case TPM_ALG_MLDSA:
 	  case TPM_ALG_HASH_MLDSA:
-	    result = CryptMlDsaValidateSignature(signature, signObject, digest);
+	    result = CryptMlDsaValidateSignature(signature, signObject, digest, NULL);
 	    break;
 #endif  // ALG_MLDSA || ALG_HASH_MLDSA
 

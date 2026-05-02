@@ -256,11 +256,18 @@ const _UNMARSHAL_T_ unmarshalArray[] = {
 #define TPMT_SYM_DEF_P_UNMARSHAL                (TPMT_SIG_SCHEME_P_UNMARSHAL + 1)
 					UNMARSHAL_DISPATCH(TPMT_SYM_DEF),
 #define TPMT_SYM_DEF_OBJECT_P_UNMARSHAL         (TPMT_SYM_DEF_P_UNMARSHAL + 1)
-					UNMARSHAL_DISPATCH(TPMT_SYM_DEF_OBJECT)
+					UNMARSHAL_DISPATCH(TPMT_SYM_DEF_OBJECT),
+/* V1.85 PQC — new input parameter types */
+#define TPM2B_KEM_CIPHERTEXT_P_UNMARSHAL        (TPMT_SYM_DEF_OBJECT_P_UNMARSHAL + 1)
+					UNMARSHAL_DISPATCH(TPM2B_KEM_CIPHERTEXT),
+#define TPM2B_SIGNATURE_CTX_P_UNMARSHAL         (TPM2B_KEM_CIPHERTEXT_P_UNMARSHAL + 1)
+					UNMARSHAL_DISPATCH(TPM2B_SIGNATURE_CTX),
+#define TPM2B_SIGNATURE_HINT_P_UNMARSHAL        (TPM2B_SIGNATURE_CTX_P_UNMARSHAL + 1)
+					UNMARSHAL_DISPATCH(TPM2B_SIGNATURE_HINT)
 					// PARAMETER_LAST_TYPE is the end of the command parameter list.
 
-    // PARAMETER_LAST_TYPE is the end of the command parameter list.    
-#define PARAMETER_LAST_TYPE             (TPMT_SYM_DEF_OBJECT_P_UNMARSHAL)
+    // PARAMETER_LAST_TYPE is the end of the command parameter list.
+#define PARAMETER_LAST_TYPE             (TPM2B_SIGNATURE_HINT_P_UNMARSHAL)
 
 };
 
@@ -346,9 +353,14 @@ const _MARSHAL_T_ marshalArray[] = {
 #define UINT32_P_MARSHAL                        (TPMT_TK_VERIFIED_P_MARSHAL + 1)
 				    MARSHAL_DISPATCH(UINT32),
 #define UINT16_P_MARSHAL                        (UINT32_P_MARSHAL + 1)
-				    MARSHAL_DISPATCH(UINT16)
+				    MARSHAL_DISPATCH(UINT16),
+/* V1.85 PQC — new output parameter types */
+#define TPM2B_KEM_CIPHERTEXT_P_MARSHAL          (UINT16_P_MARSHAL + 1)
+				    MARSHAL_DISPATCH(TPM2B_KEM_CIPHERTEXT),
+#define TPM2B_SHARED_SECRET_P_MARSHAL           (TPM2B_KEM_CIPHERTEXT_P_MARSHAL + 1)
+				    MARSHAL_DISPATCH(TPM2B_SHARED_SECRET)
 
-#define RESPONSE_PARAMETER_LAST_TYPE    (UINT16_P_MARSHAL)
+#define RESPONSE_PARAMETER_LAST_TYPE    (TPM2B_SHARED_SECRET_P_MARSHAL)
 };
 
 /* This list of aliases allows the types in the _COMMAND_DESCRIPTOR_T to match the types in the
@@ -4386,6 +4398,274 @@ ACT_SetTimeout_COMMAND_DESCRIPTOR_t _ACT_SetTimeoutData = {
 #define _ACT_SetTimeoutDataAddress 0
 #endif // CC_ACT_SetTimeout
 
+/* ── V1.85 PQC command descriptors (§29) ────────────────────────────────── */
+
+/* TPM2_VerifySequenceComplete 0x1A3 — Phase 4 stub */
+#if CC_VerifySequenceComplete
+#include "VerifySequenceComplete_fp.h"
+typedef TPM_RC (VerifySequenceComplete_Entry)(
+                   VerifySequenceComplete_In  *in,
+                   VerifySequenceComplete_Out *out);
+typedef const struct {
+    VerifySequenceComplete_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[1];
+    BYTE    types[5];
+} VerifySequenceComplete_COMMAND_DESCRIPTOR_t;
+VerifySequenceComplete_COMMAND_DESCRIPTOR_t _VerifySequenceCompleteData = {
+    /* entry         */ &TPM2_VerifySequenceComplete,
+    /* inSize        */ (UINT16)(sizeof(VerifySequenceComplete_In)),
+    /* outSize       */ (UINT16)(sizeof(VerifySequenceComplete_Out)),
+    /* offsetOfTypes */ offsetof(VerifySequenceComplete_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(VerifySequenceComplete_In, buffer))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPM2B_MAX_BUFFER_P_UNMARSHAL,
+                         END_OF_LIST,
+                         TPMT_TK_VERIFIED_P_MARSHAL,
+                         END_OF_LIST}
+};
+#define _VerifySequenceCompleteDataAddress (&_VerifySequenceCompleteData)
+#else
+#define _VerifySequenceCompleteDataAddress 0
+#endif /* CC_VerifySequenceComplete */
+
+/* TPM2_SignSequenceComplete 0x1A4 — Phase 4 stub */
+#if CC_SignSequenceComplete
+#include "SignSequenceComplete_fp.h"
+typedef TPM_RC (SignSequenceComplete_Entry)(
+                   SignSequenceComplete_In  *in,
+                   SignSequenceComplete_Out *out);
+typedef const struct {
+    SignSequenceComplete_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[1];
+    BYTE    types[5];
+} SignSequenceComplete_COMMAND_DESCRIPTOR_t;
+SignSequenceComplete_COMMAND_DESCRIPTOR_t _SignSequenceCompleteData = {
+    /* entry         */ &TPM2_SignSequenceComplete,
+    /* inSize        */ (UINT16)(sizeof(SignSequenceComplete_In)),
+    /* outSize       */ (UINT16)(sizeof(SignSequenceComplete_Out)),
+    /* offsetOfTypes */ offsetof(SignSequenceComplete_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(SignSequenceComplete_In, buffer))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPM2B_MAX_BUFFER_P_UNMARSHAL,
+                         END_OF_LIST,
+                         TPMT_SIGNATURE_P_MARSHAL,
+                         END_OF_LIST}
+};
+#define _SignSequenceCompleteDataAddress (&_SignSequenceCompleteData)
+#else
+#define _SignSequenceCompleteDataAddress 0
+#endif /* CC_SignSequenceComplete */
+
+/* TPM2_VerifyDigestSignature 0x1A5 — live (ML-DSA / HashML-DSA) */
+#if CC_VerifyDigestSignature
+#include "VerifyDigestSignature_fp.h"
+typedef TPM_RC (VerifyDigestSignature_Entry)(
+                   VerifyDigestSignature_In  *in,
+                   VerifyDigestSignature_Out *out);
+typedef const struct {
+    VerifyDigestSignature_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[3];
+    BYTE    types[7];
+} VerifyDigestSignature_COMMAND_DESCRIPTOR_t;
+VerifyDigestSignature_COMMAND_DESCRIPTOR_t _VerifyDigestSignatureData = {
+    /* entry         */ &TPM2_VerifyDigestSignature,
+    /* inSize        */ (UINT16)(sizeof(VerifyDigestSignature_In)),
+    /* outSize       */ (UINT16)(sizeof(VerifyDigestSignature_Out)),
+    /* offsetOfTypes */ offsetof(VerifyDigestSignature_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(VerifyDigestSignature_In, digest)),
+                         (UINT16)(offsetof(VerifyDigestSignature_In, signature)),
+                         (UINT16)(offsetof(VerifyDigestSignature_In, context))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPM2B_DIGEST_P_UNMARSHAL,
+                         TPMT_SIGNATURE_P_UNMARSHAL,
+                         TPM2B_SIGNATURE_CTX_P_UNMARSHAL,
+                         END_OF_LIST,
+                         TPMT_TK_VERIFIED_P_MARSHAL,
+                         END_OF_LIST}
+};
+#define _VerifyDigestSignatureDataAddress (&_VerifyDigestSignatureData)
+#else
+#define _VerifyDigestSignatureDataAddress 0
+#endif /* CC_VerifyDigestSignature */
+
+/* TPM2_SignDigest 0x1A6 — live (ML-DSA / HashML-DSA) */
+#if CC_SignDigest
+#include "SignDigest_fp.h"
+typedef TPM_RC (SignDigest_Entry)(
+                   SignDigest_In  *in,
+                   SignDigest_Out *out);
+typedef const struct {
+    SignDigest_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[4];
+    BYTE    types[8];
+} SignDigest_COMMAND_DESCRIPTOR_t;
+SignDigest_COMMAND_DESCRIPTOR_t _SignDigestData = {
+    /* entry         */ &TPM2_SignDigest,
+    /* inSize        */ (UINT16)(sizeof(SignDigest_In)),
+    /* outSize       */ (UINT16)(sizeof(SignDigest_Out)),
+    /* offsetOfTypes */ offsetof(SignDigest_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(SignDigest_In, inScheme)),
+                         (UINT16)(offsetof(SignDigest_In, digest)),
+                         (UINT16)(offsetof(SignDigest_In, context)),
+                         (UINT16)(offsetof(SignDigest_In, hint))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPMT_SIG_SCHEME_P_UNMARSHAL + ADD_FLAG,
+                         TPM2B_DIGEST_P_UNMARSHAL,
+                         TPM2B_SIGNATURE_CTX_P_UNMARSHAL,
+                         TPM2B_SIGNATURE_HINT_P_UNMARSHAL,
+                         END_OF_LIST,
+                         TPMT_SIGNATURE_P_MARSHAL,
+                         END_OF_LIST}
+};
+#define _SignDigestDataAddress (&_SignDigestData)
+#else
+#define _SignDigestDataAddress 0
+#endif /* CC_SignDigest */
+
+/* TPM2_Encapsulate 0x1A7 — live (ML-KEM) */
+#if CC_Encapsulate
+#include "Encapsulate_fp.h"
+typedef TPM_RC (Encapsulate_Entry)(
+                   Encapsulate_In  *in,
+                   Encapsulate_Out *out);
+typedef const struct {
+    Encapsulate_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[1];
+    BYTE    types[5];
+} Encapsulate_COMMAND_DESCRIPTOR_t;
+Encapsulate_COMMAND_DESCRIPTOR_t _EncapsulateData = {
+    /* entry         */ &TPM2_Encapsulate,
+    /* inSize        */ (UINT16)(sizeof(Encapsulate_In)),
+    /* outSize       */ (UINT16)(sizeof(Encapsulate_Out)),
+    /* offsetOfTypes */ offsetof(Encapsulate_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(Encapsulate_Out, sharedSecret))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         END_OF_LIST,
+                         TPM2B_KEM_CIPHERTEXT_P_MARSHAL,
+                         TPM2B_SHARED_SECRET_P_MARSHAL,
+                         END_OF_LIST}
+};
+#define _EncapsulateDataAddress (&_EncapsulateData)
+#else
+#define _EncapsulateDataAddress 0
+#endif /* CC_Encapsulate */
+
+/* TPM2_Decapsulate 0x1A8 — live (ML-KEM) */
+#if CC_Decapsulate
+#include "Decapsulate_fp.h"
+typedef TPM_RC (Decapsulate_Entry)(
+                   Decapsulate_In  *in,
+                   Decapsulate_Out *out);
+typedef const struct {
+    Decapsulate_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[1];
+    BYTE    types[5];
+} Decapsulate_COMMAND_DESCRIPTOR_t;
+Decapsulate_COMMAND_DESCRIPTOR_t _DecapsulateData = {
+    /* entry         */ &TPM2_Decapsulate,
+    /* inSize        */ (UINT16)(sizeof(Decapsulate_In)),
+    /* outSize       */ (UINT16)(sizeof(Decapsulate_Out)),
+    /* offsetOfTypes */ offsetof(Decapsulate_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(Decapsulate_In, ciphertext))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPM2B_KEM_CIPHERTEXT_P_UNMARSHAL,
+                         END_OF_LIST,
+                         TPM2B_SHARED_SECRET_P_MARSHAL,
+                         END_OF_LIST}
+};
+#define _DecapsulateDataAddress (&_DecapsulateData)
+#else
+#define _DecapsulateDataAddress 0
+#endif /* CC_Decapsulate */
+
+/* TPM2_VerifySequenceStart 0x1A9 — Phase 4 stub */
+#if CC_VerifySequenceStart
+#include "VerifySequenceStart_fp.h"
+typedef TPM_RC (VerifySequenceStart_Entry)(
+                   VerifySequenceStart_In  *in,
+                   VerifySequenceStart_Out *out);
+typedef const struct {
+    VerifySequenceStart_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[3];
+    BYTE    types[7];
+} VerifySequenceStart_COMMAND_DESCRIPTOR_t;
+VerifySequenceStart_COMMAND_DESCRIPTOR_t _VerifySequenceStartData = {
+    /* entry         */ &TPM2_VerifySequenceStart,
+    /* inSize        */ (UINT16)(sizeof(VerifySequenceStart_In)),
+    /* outSize       */ (UINT16)(sizeof(VerifySequenceStart_Out)),
+    /* offsetOfTypes */ offsetof(VerifySequenceStart_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(VerifySequenceStart_In, inScheme)),
+                         (UINT16)(offsetof(VerifySequenceStart_In, signature)),
+                         (UINT16)(offsetof(VerifySequenceStart_In, context))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPMT_SIG_SCHEME_P_UNMARSHAL + ADD_FLAG,
+                         TPMT_SIGNATURE_P_UNMARSHAL,
+                         TPM2B_SIGNATURE_CTX_P_UNMARSHAL,
+                         END_OF_LIST,
+                         TPMI_DH_OBJECT_H_MARSHAL,
+                         END_OF_LIST}
+};
+#define _VerifySequenceStartDataAddress (&_VerifySequenceStartData)
+#else
+#define _VerifySequenceStartDataAddress 0
+#endif /* CC_VerifySequenceStart */
+
+/* TPM2_SignSequenceStart 0x1AA — Phase 4 stub */
+#if CC_SignSequenceStart
+#include "SignSequenceStart_fp.h"
+typedef TPM_RC (SignSequenceStart_Entry)(
+                   SignSequenceStart_In  *in,
+                   SignSequenceStart_Out *out);
+typedef const struct {
+    SignSequenceStart_Entry  *entry;
+    UINT16  inSize;
+    UINT16  outSize;
+    UINT16  offsetOfTypes;
+    UINT16  paramOffsets[3];
+    BYTE    types[7];
+} SignSequenceStart_COMMAND_DESCRIPTOR_t;
+SignSequenceStart_COMMAND_DESCRIPTOR_t _SignSequenceStartData = {
+    /* entry         */ &TPM2_SignSequenceStart,
+    /* inSize        */ (UINT16)(sizeof(SignSequenceStart_In)),
+    /* outSize       */ (UINT16)(sizeof(SignSequenceStart_Out)),
+    /* offsetOfTypes */ offsetof(SignSequenceStart_COMMAND_DESCRIPTOR_t, types),
+    /* offsets       */ {(UINT16)(offsetof(SignSequenceStart_In, inScheme)),
+                         (UINT16)(offsetof(SignSequenceStart_In, context)),
+                         (UINT16)(offsetof(SignSequenceStart_In, hint))},
+    /* types         */ {TPMI_DH_OBJECT_H_UNMARSHAL,
+                         TPMT_SIG_SCHEME_P_UNMARSHAL + ADD_FLAG,
+                         TPM2B_SIGNATURE_CTX_P_UNMARSHAL,
+                         TPM2B_SIGNATURE_HINT_P_UNMARSHAL,
+                         END_OF_LIST,
+                         TPMI_DH_OBJECT_H_MARSHAL,
+                         END_OF_LIST}
+};
+#define _SignSequenceStartDataAddress (&_SignSequenceStartData)
+#else
+#define _SignSequenceStartDataAddress 0
+#endif /* CC_SignSequenceStart */
+
 #if CC_Vendor_TCG_Test
 #include "Vendor_TCG_Test_fp.h"
 typedef TPM_RC  (Vendor_TCG_Test_Entry)(
@@ -4819,6 +5099,31 @@ COMMAND_DESCRIPTOR_t *s_CommandDataArray[] = {
 #if (PAD_LIST || CC_SetCapability)
     (COMMAND_DESCRIPTOR_t*)_SetCapabilityDataAddress,
 #endif // CC_SetCapability
+/* V1.85 PQC commands 0x1A3–0x1AA */
+#if (PAD_LIST || CC_VerifySequenceComplete)
+    (COMMAND_DESCRIPTOR_t*)_VerifySequenceCompleteDataAddress,
+#endif
+#if (PAD_LIST || CC_SignSequenceComplete)
+    (COMMAND_DESCRIPTOR_t*)_SignSequenceCompleteDataAddress,
+#endif
+#if (PAD_LIST || CC_VerifyDigestSignature)
+    (COMMAND_DESCRIPTOR_t*)_VerifyDigestSignatureDataAddress,
+#endif
+#if (PAD_LIST || CC_SignDigest)
+    (COMMAND_DESCRIPTOR_t*)_SignDigestDataAddress,
+#endif
+#if (PAD_LIST || CC_Encapsulate)
+    (COMMAND_DESCRIPTOR_t*)_EncapsulateDataAddress,
+#endif
+#if (PAD_LIST || CC_Decapsulate)
+    (COMMAND_DESCRIPTOR_t*)_DecapsulateDataAddress,
+#endif
+#if (PAD_LIST || CC_VerifySequenceStart)
+    (COMMAND_DESCRIPTOR_t*)_VerifySequenceStartDataAddress,
+#endif
+#if (PAD_LIST || CC_SignSequenceStart)
+    (COMMAND_DESCRIPTOR_t*)_SignSequenceStartDataAddress,
+#endif
 #if (PAD_LIST || CC_Vendor_TCG_Test)
     (COMMAND_DESCRIPTOR_t *)_Vendor_TCG_TestDataAddress,
 #endif

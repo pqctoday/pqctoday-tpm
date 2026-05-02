@@ -1289,7 +1289,7 @@ TPM2_PolicyAuthorize(PolicyAuthorize_In* in  // IN: input parameter list
 		return result;
 
 	    // Compare ticket digest.  If not match, return error
-	    if(!MemoryEqual2B(&in->checkTicket.digest.b, &ticket.digest.b))
+	    if(!MemoryEqual2B(&in->checkTicket.hmac.b, &ticket.hmac.b))
 		return TPM_RCS_VALUE + RC_PolicyAuthorize_checkTicket;
 	}
 

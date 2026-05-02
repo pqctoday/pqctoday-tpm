@@ -1,0 +1,163 @@
+name: wolfTPM Runtime Cross-Check
+
+# Heavyweight runtime cross-implementation check: builds wolfSSL + wolfTPM
+# v4.0.0 PR #445, drives wolfTPM's PQC clients against our libtpms+swtpm
+# over the swtpm socket, asserts FIPS 203/204 byte sizes match V1.85 RC4
+# spec exactly. Independent crypto stacks (wolfCrypt vs OpenSSL 3.6.2) →
+# strongest interop signal we have.
+#
+# Spec authority: TCG TPM 2.0 Library Specification V1.85 RC4 (PDFs in
+# docs/standards/). When wolfTPM and pqctoday-tpm diverge, the spec wins.
+#
+# Triggers:
+#   - workflow_dispatch:  manual on demand from the Actions tab
+#   - schedule:           06:00 UTC daily (regression catch-net)
+#   - pull_request label: 'xcheck' to opt in for a single PR run
+#
+# Runtime: ~6 minutes total (4 min wolfSSL+wolfTPM build, 2 min everything else).
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 06:00 UTC — early enough to surface regressions before the
+    # work-day starts in either of our primary timezones.
+    - cron: '0 6 * * *'
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+
+env:
+  OPENSSL_VERSION: 3.6.2
+  # Pinned so cross-impl results are reproducible. Bump deliberately and
+  # re-run wolftpm-xcheck locally to confirm before merging.
+  WOLFSSL_REF: 7b53303
+  WOLFTPM_REF: fbbf6fe   # PR #445 merge into wolfTPM v4.0.0
+
+jobs:
+  xcheck:
+    name: wolfTPM v4.0.0 ↔ pqctoday-tpm runtime cross-check
+    runs-on: ubuntu-24.04
+
+    # Only run on PRs that explicitly opt in via the 'xcheck' label.
+    # workflow_dispatch + schedule run unconditionally.
+    if: |
+      github.event_name == 'workflow_dispatch'
+      || github.event_name == 'schedule'
+      || (github.event_name == 'pull_request'
+          && contains(github.event.pull_request.labels.*.name, 'xcheck'))
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential autoconf automake libtool pkg-config \
+            libjson-glib-dev libglib2.0-dev libtasn1-6-dev libseccomp-dev \
+            libjson-c-dev cmake expect gawk socat python3 \
+            iproute2 net-tools
+
+      - name: Cache OpenSSL ${{ env.OPENSSL_VERSION }}
+        id: cache-openssl
+        uses: actions/cache@v4
+        with:
+          path: /opt/openssl
+          key: openssl-${{ env.OPENSSL_VERSION }}-${{ runner.os }}
+
+      - name: Build OpenSSL ${{ env.OPENSSL_VERSION }}
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSLO "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
+          tar xf "openssl-${OPENSSL_VERSION}.tar.gz"
+          cd "openssl-${OPENSSL_VERSION}"
+          ./Configure --prefix=/opt/openssl --libdir=lib64 shared
+          make -j"$(nproc)" && sudo make install_sw
+
+      - name: Register OpenSSL
+        run: |
+          echo '/opt/openssl/lib64' | sudo tee /etc/ld.so.conf.d/openssl.conf
+          sudo ldconfig
+
+      # ── pqctoday-tpm side ────────────────────────────────────────────────
+      - name: Build + install libtpms
+        working-directory: libtpms
+        env:
+          PKG_CONFIG_PATH: /opt/openssl/lib64/pkgconfig
+          CFLAGS: -I/opt/openssl/include
+          LDFLAGS: -L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64
+        run: |
+          ./autogen.sh
+          ./configure --with-tpm2 --with-openssl
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      - name: Build + install swtpm
+        working-directory: swtpm
+        env:
+          PKG_CONFIG_PATH: /opt/openssl/lib64/pkgconfig:/usr/local/lib/pkgconfig
+          LDFLAGS: -L/opt/openssl/lib64 -Wl,-rpath,/opt/openssl/lib64
+        run: |
+          ./autogen.sh --with-openssl
+          make -j"$(nproc)"
+          sudo make install
+          sudo ldconfig
+
+      # ── wolfSSL with PQC (pinned) ────────────────────────────────────────
+      - name: Cache wolfSSL @ ${{ env.WOLFSSL_REF }}
+        id: cache-wolfssl
+        uses: actions/cache@v4
+        with:
+          path: /opt/wolfssl
+          key: wolfssl-${{ env.WOLFSSL_REF }}-${{ runner.os }}-pqc-static-fpic
+
+      - name: Build wolfSSL with --enable-mlkem --enable-dilithium
+        if: steps.cache-wolfssl.outputs.cache-hit != 'true'
+        run: |
+          git clone https://github.com/wolfSSL/wolfssl /tmp/wolfssl
+          cd /tmp/wolfssl
+          git checkout "${WOLFSSL_REF}"
+          ./autogen.sh
+          ./configure --prefix=/opt/wolfssl \
+              --enable-experimental --enable-dilithium --enable-mlkem \
+              --enable-aescfb --enable-cmac --enable-keygen --enable-rsapss \
+              --disable-shared --enable-static \
+              CFLAGS="-fPIC -DWC_RSA_NO_PADDING"
+          make -j"$(nproc)"
+          sudo make install
+
+      - name: Workaround wolfTPM upstream bug (mlkem.h ↔ wc_mlkem.h)
+        # See docs/upstream-issues/wolfTPM-001-mlkem-header-rename.md
+        run: sudo ln -sf wc_mlkem.h /opt/wolfssl/include/wolfssl/wolfcrypt/mlkem.h
+
+      # ── wolfTPM with --enable-pqc (pinned) ───────────────────────────────
+      - name: Build wolfTPM @ ${{ env.WOLFTPM_REF }} with --enable-pqc + --enable-swtpm
+        run: |
+          git clone https://github.com/wolfSSL/wolfTPM /tmp/wolftpm
+          cd /tmp/wolftpm
+          git checkout "${WOLFTPM_REF}"
+          ./autogen.sh
+          ./configure --prefix=/opt/wolftpm \
+              --with-wolfcrypt=/opt/wolfssl --enable-pqc --enable-swtpm
+          make -j"$(nproc)"
+          # The orchestration script looks under /opt/build/wolftpm by default
+          # (matches Dockerfile.xcheck); CI puts it in /tmp, so override.
+          echo "WOLFTPM_DIR=/tmp/wolftpm" >> "$GITHUB_ENV"
+
+      # ── Drive the cross-check ────────────────────────────────────────────
+      - name: Run wolfTPM ↔ pqctoday-tpm runtime cross-check
+        env:
+          LD_LIBRARY_PATH: /opt/openssl/lib64:/usr/local/lib
+          PATH: /opt/openssl/bin:/usr/local/bin:/usr/bin:/bin
+          WORKSPACE: ${{ github.workspace }}
+        run: bash tests/compliance/run_wolftpm_runtime_xcheck.sh
+
+      - name: Upload swtpm logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcheck-swtpm-logs
+          path: |
+            /tmp/swtpm.log
+            /tmp/swtpm_setup.log

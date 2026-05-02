@@ -95,6 +95,41 @@ jobs:
           tpm2_getcap algorithms | head -40
           kill "$SWTPM_PID" || true
 
+      # Install swtpm so swtpm_setup is available to the compliance suite + crossval.
+      - name: Install swtpm
+        working-directory: swtpm
+        run: sudo make install && sudo ldconfig
+
+      # Build the cross-validation harness (Linux ELF binaries used by both
+      # the compliance script and the dedicated crossval target). json-c is
+      # needed for ACVP KAT vector parsing.
+      - name: Install json-c (for ACVP KAT loader)
+        run: sudo apt-get install -y --no-install-recommends libjson-c-dev cmake
+
+      - name: Build crossval harness
+        env:
+          PKG_CONFIG_PATH: /opt/openssl/lib64/pkgconfig
+          OPENSSL_ROOT_DIR: /opt/openssl
+        run: |
+          cmake -S tests/crossval -B tests/crossval/build \
+              -DCMAKE_PREFIX_PATH=/opt/openssl \
+              -DOPENSSL_ROOT_DIR=/opt/openssl
+          cmake --build tests/crossval/build -j"$(nproc)"
+
+      - name: Run crossval — KAT + TPM2 roundtrip + Phase 3 (incl. allowExternalMu)
+        env:
+          LD_LIBRARY_PATH: /opt/openssl/lib64:/usr/local/lib
+        run: |
+          tests/crossval/build/test_pqc_crossval
+          tests/crossval/build/test_tpm_roundtrip
+          tests/crossval/build/test_pqc_phase3
+
+      - name: Run TCG V1.85 RC4 compliance suite (target: 100/0/0)
+        env:
+          LD_LIBRARY_PATH: /opt/openssl/lib64:/usr/local/lib
+          PATH: /opt/openssl/bin:/usr/local/bin:/usr/bin:/bin
+        run: bash tests/compliance/v185_compliance.sh
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -104,3 +139,5 @@ jobs:
             libtpms/config.log
             swtpm/config.log
             libtpms/tests/*.log
+            tests/crossval/build/CMakeFiles/CMakeOutput.log
+            tests/crossval/build/CMakeFiles/CMakeError.log

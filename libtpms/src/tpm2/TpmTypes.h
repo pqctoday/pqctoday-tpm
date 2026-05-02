@@ -478,6 +478,16 @@ typedef UINT32             TPM_RC;
 #define TPM_RCS_ECC_POINT           (TPM_RC)(RC_FMT1+0x027)
 #define TPM_RC_FW_LIMITED           (TPM_RC)(RC_FMT1 + 0x028)
 #define TPM_RC_SVN_LIMITED          (TPM_RC)(RC_FMT1 + 0x029)
+/* V1.85 RC4 Part 2 §6.6.4 — new format-1 error codes for PQC */
+#define TPM_RC_EXT_MU               (TPM_RC)(RC_FMT1 + 0x02B) /* §12.2.3.6: object
+                                      * creation / TPM2_TestParms returns this when
+                                      * allowExternalMu = YES but the TPM does not
+                                      * support external Mu */
+#define TPM_RCS_EXT_MU              (TPM_RC)(RC_FMT1 + 0x02B)
+#define TPM_RC_ONE_SHOT_SIGNATURE   (TPM_RC)(RC_FMT1 + 0x02C) /* Phase 4: Pure ML-DSA
+                                      * sign sequence is one-shot per Part 1 §22.2 —
+                                      * SequenceUpdate must reject with this code */
+#define TPM_RCS_ONE_SHOT_SIGNATURE  (TPM_RC)(RC_FMT1 + 0x02C)
 #define RC_WARN                     (TPM_RC)(0x900)
 #define TPM_RC_CONTEXT_GAP          (TPM_RC)(RC_WARN+0x001)
 #define TPM_RC_OBJECT_MEMORY        (TPM_RC)(RC_WARN+0x002)
@@ -675,6 +685,19 @@ typedef  UINT32             TPM_PT;
 #define TPMA_ML_PARAMETER_SET_mlDsa_65    ((UINT32)1 << 4)
 #define TPMA_ML_PARAMETER_SET_mlDsa_87    ((UINT32)1 << 5)
 #define TPMA_ML_PARAMETER_SET_extMu       ((UINT32)1 << 6)
+
+/* Compile-time capability flag mirroring TPMA_ML_PARAMETER_SET.extMu.
+ * Defined to 1 when this libtpms build supports allowExternalMu = YES on
+ * ML-DSA keys (V1.85 §12.2.3.6, FIPS 204 §5.4 external-Mu signing path).
+ * Object creation in CryptUtil.c uses this to decide whether to return
+ * TPM_RC_EXT_MU. PropertyCap.c uses it to decide whether to set the
+ * extMu bit in the TPM_PT_ML_PARAMETER_SETS attribute. Keep these two
+ * uses in sync — flipping one without the other is a spec violation. */
+#if ALG_MLDSA
+# define TPM_SUPPORTS_ML_EXT_MU 1
+#else
+# define TPM_SUPPORTS_ML_EXT_MU 0
+#endif
 #define PT_VAR                        (TPM_PT)(PT_GROUP*2)
 #define TPM_PT_PERMANENT              (TPM_PT)(PT_VAR+0)
 #define TPM_PT_STARTUP_CLEAR          (TPM_PT)(PT_VAR+1)

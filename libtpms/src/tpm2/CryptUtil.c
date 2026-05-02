@@ -1261,6 +1261,19 @@ CryptCreateObject(OBJECT*                object,  // IN: new object structure po
 	    // Create ML-DSA key (FIPS 204, TCG V1.85)
 	  case TPM_ALG_MLDSA:
 	  case TPM_ALG_HASH_MLDSA:
+	    /* V1.85 RC4 Part 2 §12.2.3.6: "If a TPM supports ML-DSA but not external Mu,
+	     * it will return TPM_RC_EXT_MU in object creation and TPM2_TestParms() if
+	     * allowExternalMu is YES." HashML-DSA (Table 230) has no allowExternalMu
+	     * field so the gate is ML-DSA-only. The capability bit is advertised in
+	     * TPMA_ML_PARAMETER_SET.extMu (Table 46); if a future libtpms build flips
+	     * extMu support off, this gate enforces the spec contract.  */
+	    if (publicArea->type == TPM_ALG_MLDSA
+	        && publicArea->parameters.mldsaDetail.allowExternalMu == YES
+	        && !TPM_SUPPORTS_ML_EXT_MU)
+	    {
+	        result = TPM_RC_EXT_MU;
+	        break;
+	    }
 	    result = CryptMlDsaGenerateKey(publicArea, sensitive, object, rand);
 	    break;
 #endif  // ALG_MLDSA || ALG_HASH_MLDSA

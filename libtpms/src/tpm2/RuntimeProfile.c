@@ -62,7 +62,14 @@ const char defaultAlgorithmsProfile[] =
     "null,rsassa,rsaes,rsapss,oaep,ecdsa,ecdh,ecdaa,sm2,ecschnorr,ecmqv,"
     "kdf1-sp800-56a,kdf2,kdf1-sp800-108,ecc,ecc-min-size=192,ecc-nist,"
     "ecc-bn,ecc-sm2-p256,symcipher,camellia,camellia-min-size=128,cmac,"
-    "ctr,ofb,cbc,cfb,ecb";
+    "ctr,ofb,cbc,cfb,ecb,"
+    /* V1.85 PQC algorithms — registered in s_AlgorithmProperties since
+     * commit 2403f4ca. Listing them here makes the runtime profile
+     * consistent with the algorithm registry; without this entry, the
+     * profile string would parse cleanly but the bits in
+     * RuntimeAlgorithm.enabledAlgorithms for ML-KEM/ML-DSA/HashML-DSA
+     * would never be set on the default-v1 profile. */
+    "mlkem,mldsa,hash-mldsa";
 
 static const struct RuntimeProfileDesc {
     const char *name;

@@ -397,11 +397,12 @@ TPMPropertyIsDefined(
 	        mlAttrs |= TPMA_ML_PARAMETER_SET_mlDsa_44
 	                |  TPMA_ML_PARAMETER_SET_mlDsa_65
 	                |  TPMA_ML_PARAMETER_SET_mlDsa_87;
-	        // Phase 3.5: TPMS_MLDSA_PARMS.allowExternalMu is wire-format
-	        // accepted (Table 229) but TPM2_SignDigest enforcement of
-	        // the flag is pending. Advertise extMu support so cross-impl
-	        // peers can negotiate; revisit when enforcement lands.
-	        mlAttrs |= TPMA_ML_PARAMETER_SET_extMu;
+	        // V1.85 §12.2.3.6 + Table 46 bit 6: this bit advertises support
+	        // for allowExternalMu = YES. TPM_SUPPORTS_ML_EXT_MU (TpmTypes.h)
+	        // gates both this advertisement and the TPM_RC_EXT_MU rejection
+	        // in CryptUtil.c — must stay in sync.
+	        if (TPM_SUPPORTS_ML_EXT_MU)
+	            mlAttrs |= TPMA_ML_PARAMETER_SET_extMu;
 #endif
 	        *value = mlAttrs;
 	    }

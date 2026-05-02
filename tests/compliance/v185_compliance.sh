@@ -491,6 +491,46 @@ grep -q "TPMT_SYM_DEF_OBJECT\s*symmetric" "libtpms/src/tpm2/TpmTypes.h" \
     && pass "TPMS_MLKEM_PARMS.symmetric field present (Table 231)" \
     || fail "TPMS_MLKEM_PARMS missing symmetric field"
 
+# Algorithm-registry consistency: defaultAlgorithmsProfile must list the PQC
+# algorithms that s_AlgorithmProperties registers, otherwise the default-v1
+# profile would parse cleanly but never set the runtime-enabled bits for ML-KEM
+# / ML-DSA / HashML-DSA. Spec angle: V1.85 §6.3 algorithm registry lists all
+# three; the runtime profile is libtpms's mechanism to honour that registry.
+grep -q "mlkem,mldsa,hash-mldsa" "libtpms/src/tpm2/RuntimeProfile.c" \
+    && pass "defaultAlgorithmsProfile lists mlkem,mldsa,hash-mldsa (registry consistency)" \
+    || fail "defaultAlgorithmsProfile missing PQC algorithm names"
+
+grep -q '\[TPM_ALG_MLKEM\]\s*=' "libtpms/src/tpm2/RuntimeAlgorithm.c" \
+    && pass "s_AlgorithmProperties has TPM_ALG_MLKEM entry" \
+    || fail "s_AlgorithmProperties missing TPM_ALG_MLKEM"
+grep -q '\[TPM_ALG_MLDSA\]\s*=' "libtpms/src/tpm2/RuntimeAlgorithm.c" \
+    && pass "s_AlgorithmProperties has TPM_ALG_MLDSA entry" \
+    || fail "s_AlgorithmProperties missing TPM_ALG_MLDSA"
+grep -q '\[TPM_ALG_HASH_MLDSA\]\s*=' "libtpms/src/tpm2/RuntimeAlgorithm.c" \
+    && pass "s_AlgorithmProperties has TPM_ALG_HASH_MLDSA entry" \
+    || fail "s_AlgorithmProperties missing TPM_ALG_HASH_MLDSA"
+
+# V1.85 §6.6.4 — TPM_RC_EXT_MU and TPM_RC_ONE_SHOT_SIGNATURE error codes
+grep -q "TPM_RC_EXT_MU\s*.*RC_FMT1.*0x02B" "libtpms/src/tpm2/TpmTypes.h" \
+    && pass "TPM_RC_EXT_MU defined as RC_FMT1+0x02B (§6.6.4)" \
+    || fail "TPM_RC_EXT_MU missing or wrong value"
+grep -q "TPM_RC_ONE_SHOT_SIGNATURE\s*.*RC_FMT1.*0x02C" "libtpms/src/tpm2/TpmTypes.h" \
+    && pass "TPM_RC_ONE_SHOT_SIGNATURE defined as RC_FMT1+0x02C (§6.6.4)" \
+    || fail "TPM_RC_ONE_SHOT_SIGNATURE missing or wrong value"
+
+# §12.2.3.6: object creation must return TPM_RC_EXT_MU when allowExternalMu=YES
+# is requested but the TPM doesn't support external Mu.
+grep -q "TPM_RC_EXT_MU" "libtpms/src/tpm2/CryptUtil.c" \
+    && pass "TPM_RC_EXT_MU enforced in object creation (§12.2.3.6)" \
+    || fail "TPM_RC_EXT_MU not enforced in CryptUtil.c"
+
+# Capability ⟷ enforcement consistency: PropertyCap.c advertises extMu only
+# when CryptUtil.c will accept it. Both must use the same compile flag.
+grep -q "TPM_SUPPORTS_ML_EXT_MU" "libtpms/src/tpm2/CryptUtil.c" \
+    && grep -q "TPM_SUPPORTS_ML_EXT_MU" "libtpms/src/tpm2/PropertyCap.c" \
+    && pass "TPM_SUPPORTS_ML_EXT_MU gates both advertisement + enforcement" \
+    || fail "TPM_SUPPORTS_ML_EXT_MU inconsistency between PropertyCap.c and CryptUtil.c"
+
 # Phase 3 — Runtime roundtrip (test_pqc_phase3)
 section "Phase 3 — Runtime Roundtrip (test_pqc_phase3)"
 
